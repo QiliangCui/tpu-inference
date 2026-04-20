@@ -256,6 +256,14 @@ def test_flax_nnx_vs_vllm_performance():
     # This should be 2-3% but 8% reduces flakiness.
     percentage_difference_threshold = 0.08
 
+    # Warmup both backends to populate JAX compilation cache.
+    # Without this, the first-run backend pays the compilation cost and
+    # appears slower, causing flaky failures.
+    print("Running warmup (vllm) to populate JAX compilation cache...")
+    _run_server_and_bench(model_name, "vllm", 8000)
+    print("Running warmup (flax_nnx) to populate JAX compilation cache...")
+    _run_server_and_bench(model_name, "flax_nnx", 8000)
+
     throughput_vllm = _run_server_and_bench(model_name, "vllm", 8001)
     throughput_flax = _run_server_and_bench(model_name, "flax_nnx", 8002)
 
