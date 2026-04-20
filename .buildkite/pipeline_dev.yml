@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Warmup fix test: run test_flax_nnx_vs_vllm_performance 10 times in parallel.
+# Warmup fix test: run test_flax_nnx_vs_vllm_performance once.
 
 steps:
 
@@ -25,26 +25,14 @@ steps:
     commands:
       - bash -c 'source .buildkite/scripts/setup_docker_env.sh && setup_environment "vllm-tpu" "false" "true"'
 
-  - label: "tpu7x OOT perf warmup run {{matrix}}"
+  - label: "tpu7x OOT perf warmup test"
     key: tpu7x_oot_perf_warmup
     depends_on: tpu7x_build_docker
-    soft_fail: true
     env:
       USE_PREBUILT_IMAGE: "1"
       TPU_VERSION: "tpu7x"
     agents:
       queue: tpu_v7x_2_queue
-    matrix:
-      - "1"
-      - "2"
-      - "3"
-      - "4"
-      - "5"
-      - "6"
-      - "7"
-      - "8"
-      - "9"
-      - "10"
     commands:
       - |
         .buildkite/scripts/run_in_docker.sh \
