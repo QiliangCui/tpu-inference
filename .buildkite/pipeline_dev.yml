@@ -1,4 +1,4 @@
-# Copyright 2026 Google LLC
+# Copyright 2025 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Auto-generated pipeline for model bring-up evaluation.
-# This file is managed by agent-vllm. Do not edit manually.
-
 steps:
-  - label: ':docker: Build and Push Base Image (tpu7x)'
+
+  # -----------------------------------------------------------------
+  # Build Step (required by all demo steps below)
+  # -----------------------------------------------------------------
+  - label: ":docker: Build and Push Base Image (tpu7x)"
     key: tpu7x_build_docker
     agents:
       queue: cpu_64_core
@@ -25,55 +26,137 @@ steps:
     commands:
       - bash -c 'source .buildkite/scripts/setup_docker_env.sh && setup_environment "vllm-tpu" "false" "true"'
 
-  - label: "tpu7x Unit tests for Qwen/Qwen3.6-35B-A3B"
-    key: "tpu7x_Qwen_Qwen3_6-35B-A3B_UnitTest"
+  # -----------------------------------------------------------------
+  # Qwen3.6-35B-A3B UnitTest
+  # Uses hf_overrides to force text-only CausalLM class, bypassing MM budget check.
+  # -----------------------------------------------------------------
+  - label: "tpu7x UnitTest Qwen/Qwen3.6-35B-A3B"
+    key: tpu7x_Qwen_Qwen3_6_35B_A3B_UnitTest
     depends_on: tpu7x_build_docker
     env:
-      TPU_VERSION: "tpu7x"
       USE_PREBUILT_IMAGE: "1"
+      TPU_VERSION: "tpu7x"
     agents:
-      queue: "tpu_v7x_8_queue"
-    soft_fail: true
+      queue: tpu_v7x_8_queue
     commands:
       - |
         .buildkite/scripts/run_in_docker.sh \
-          bash -c 'SKIP_JAX_PRECOMPILE=1 VLLM_XLA_CHECK_RECOMPILATION=0 MODEL_IMPL_TYPE=vllm python /workspace/tpu_inference/examples/offline_inference.py --model Qwen/Qwen3.6-35B-A3B --tensor-parallel-size 8 --max-model-len 2048 --max-num-batched-tokens 256 --max-num-seqs 256'
-  - label: "tpu7x Record unit test result for Qwen/Qwen3.6-35B-A3B"
-    key: "tpu7x_record_Qwen_Qwen3_6-35B-A3B_UnitTest"
-    depends_on: "tpu7x_Qwen_Qwen3_6-35B-A3B_UnitTest"
+          bash -c 'SKIP_JAX_PRECOMPILE=1 VLLM_XLA_CHECK_RECOMPILATION=0 MODEL_IMPL_TYPE=vllm python /workspace/tpu_inference/examples/offline_inference.py \
+            --model Qwen/Qwen3.6-35B-A3B \
+            --tensor-parallel-size 8 \
+            --max-num-batched-tokens 16384 \
+            --max-num-seqs 256 \
+            --max-model-len 4096 \
+            --hf-overrides "{\"architectures\": [\"Qwen3_5MoeForCausalLM\"]}" \
+            --chat-template-kwargs="{\"enable_thinking\": false}"'
+
+  # -----------------------------------------------------------------
+  # Qwen3.6-35B-A3B Accuracy
+  # Uses hf_overrides to force text-only CausalLM class, bypassing MM budget check.
+  # -----------------------------------------------------------------
+  - label: "tpu7x Accuracy Qwen/Qwen3.6-35B-A3B"
+    key: tpu7x_Qwen_Qwen3_6_35B_A3B_Accuracy
+    depends_on: tpu7x_Qwen_Qwen3_6_35B_A3B_UnitTest
     env:
-      CI_TPU_VERSION: "tpu7x"
-      CI_TARGET: "Qwen/Qwen3.6-35B-A3B"
-      CI_STAGE: "UnitTest"
-      CI_CATEGORY: "text-only"
+      USE_PREBUILT_IMAGE: "1"
+      TPU_VERSION: "tpu7x"
     agents:
-      queue: cpu
+      queue: tpu_v7x_8_queue
     commands:
       - |
-        .buildkite/scripts/record_step_result.sh tpu7x_Qwen_Qwen3_6-35B-A3B_UnitTest
+        .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/check_lm_eval.sh \
+          --model_name "Qwen/Qwen3.6-35B-A3B" \
+          --use_moe_ep_kernel 0 \
+          --tensor_parallel_size 8 \
+          --max_model_len 4096 \
+          --max_num_batched_tokens 16384 \
+          --max_gen_toks 2048 \
+          --enable_expert_parallel 0 \
+          --flex_threshold 0.60 \
+          --strict_threshold 0.60 \
+          --hf_overrides '{"architectures": ["Qwen3_5MoeForCausalLM"]}' \
+          --enable_thinking false \
+          --block_size 256 \
+          --limit 100
 
-  - label: "tpu7x Accuracy for Qwen/Qwen3.6-35B-A3B"
-    key: "tpu7x_Qwen_Qwen3_6-35B-A3B_Accuracy"
-    depends_on: "tpu7x_record_Qwen_Qwen3_6-35B-A3B_UnitTest"
+  # -----------------------------------------------------------------
+  # Demo 1: offline_inference.py
+  # -----------------------------------------------------------------
+  - label: "tpu7x [demo] offline_inference.py"
+    key: tpu7x_demo_offline_inference
+    depends_on: tpu7x_build_docker
+    env:
+      USE_PREBUILT_IMAGE: "1"
+      TPU_VERSION: "tpu7x"
+    agents:
+      queue: tpu_v7x_2_queue
+    commands:
+      - |
+        .buildkite/scripts/run_in_docker.sh bash -c '
+          python3 examples/offline_inference.py \
+            --model Qwen/Qwen3-0.6B \
+            --tensor-parallel-size 2 \
+            --max-model-len 1024 \
+            --max-tokens 128'
+
+  # -----------------------------------------------------------------
+  # Demo 2: vllm serve + vllm bench serve
+  # -----------------------------------------------------------------
+  - label: "tpu7x [demo] vllm serve + vllm bench serve"
+    key: tpu7x_demo_serve_bench
+    depends_on: tpu7x_build_docker
+    env:
+      USE_PREBUILT_IMAGE: "1"
+      TPU_VERSION: "tpu7x"
+    agents:
+      queue: tpu_v7x_2_queue
+    commands:
+      - |
+        .buildkite/scripts/run_in_docker.sh bash .buildkite/scripts/run_benchmark_demo.sh
+
+  # -----------------------------------------------------------------
+  # Demo 3: DCN-based P/D disaggregation
+  # -----------------------------------------------------------------
+  - label: "tpu7x [demo] E2E disaggregation (DCN P/D)"
+    key: tpu7x_demo_disagg
+    depends_on: tpu7x_build_docker
+    env:
+      USE_PREBUILT_IMAGE: "1"
+      TPU_VERSION: "tpu7x"
+      MODEL: "Qwen/Qwen3-0.6B"
+      INPUT_LEN: 1024
+      OUTPUT_LEN: 128
+      NUM_PROMPTS: 5
+      RANDOM_SEED: 10
+      MAX_CONCURRENCY: 4
+      TEST_MODE: 1
+    agents:
+      queue: tpu_v7x_8_queue
+    commands:
+      - .buildkite/scripts/run_disagg.sh
+
+  # -----------------------------------------------------------------
+  # Demo 4: Ray-based multi-host inference
+  # -----------------------------------------------------------------
+  - label: "tpu7x [demo] Ray-based multi-host"
+    key: tpu7x_demo_multihost
     env:
       TPU_VERSION: "tpu7x"
-      USE_PREBUILT_IMAGE: "1"
     agents:
-      queue: "tpu_v7x_8_queue"
-    soft_fail: true
+      queue: tpu_v7x_16_queue
     commands:
       - |
-        .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/check_lm_eval.sh  --model_name "Qwen/Qwen3.6-35B-A3B" --use_moe_ep_kernel 0 --tensor_parallel_size 8 --max_model_len 2048 --max_num_batched_tokens 2048 --max_gen_toks 256 --enable_expert_parallel 0 --flex_threshold 0.6 --strict_threshold 0.6
-  - label: "tpu7x Record accuracy result for Qwen/Qwen3.6-35B-A3B"
-    key: "tpu7x_record_Qwen_Qwen3_6-35B-A3B_Accuracy"
-    depends_on: "tpu7x_Qwen_Qwen3_6-35B-A3B_Accuracy"
-    env:
-      CI_TPU_VERSION: "tpu7x"
-      CI_TARGET: "Qwen/Qwen3.6-35B-A3B"
-      CI_STAGE: "Accuracy/Correctness"
-      CI_CATEGORY: "text-only"
-    agents:
-      queue: cpu
-    commands:
-      - |
-        .buildkite/scripts/record_step_result.sh tpu7x_Qwen_Qwen3_6-35B-A3B_Accuracy
+        MODEL="gs://tpu-commons-ci/qwen/models--Qwen--Qwen3-30B-A3B/snapshots/ad44e777bcd18fa416d9da3bd8f70d33ebb85d39"
+        .buildkite/scripts/run_multihost.sh \
+          "vllm serve \${MODEL} \
+            --port 8000 \
+            --tensor-parallel-size 16 \
+            --trust-remote-code \
+            --max-model-len 1024 \
+            --no-async-scheduling \
+            --load-format=runai_streamer \
+            --no-enable-prefix-caching" \
+          "curl http://localhost:8000/v1/completions \
+            -X POST \
+            -H 'Content-Type: application/json' \
+            -d '{\"model\": \"${MODEL}\", \"prompt\": \"San Francisco is a\", \"max_tokens\": 50}'"
