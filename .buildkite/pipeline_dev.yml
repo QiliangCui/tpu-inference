@@ -36,7 +36,7 @@ steps:
     commands:
       - |
         .buildkite/scripts/run_in_docker.sh \
-          bash -c 'SKIP_JAX_PRECOMPILE=1 VLLM_XLA_CHECK_RECOMPILATION=0 MODEL_IMPL_TYPE=vllm python /workspace/tpu_inference/examples/offline_inference.py --model Qwen/Qwen3.6-35B-A3B --tensor-parallel-size 8 --max-model-len 2048 --max-num-batched-tokens 2048 --max-num-seqs 256'
+          bash -c 'SKIP_JAX_PRECOMPILE=1 VLLM_XLA_CHECK_RECOMPILATION=0 MODEL_IMPL_TYPE=vllm python /workspace/tpu_inference/examples/offline_inference.py --model Qwen/Qwen3.6-35B-A3B --tensor-parallel-size 8 --max-model-len 2048 --max-num-batched-tokens 2048 --max-num-seqs 256 --limit-mm-per-prompt "{\"image\": 0, \"video\": 0}"'
   - label: "tpu7x Record unit test result for Qwen/Qwen3.6-35B-A3B"
     key: "tpu7x_record_Qwen_Qwen3_6-35B-A3B_UnitTest"
     depends_on: "tpu7x_Qwen_Qwen3_6-35B-A3B_UnitTest"
@@ -61,7 +61,7 @@ steps:
       queue: "tpu_v7x_8_queue"
     commands:
       - |
-        .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/check_lm_eval.sh  --model_name "Qwen/Qwen3.6-35B-A3B" --use_moe_ep_kernel 0 --tensor_parallel_size 8 --max_model_len 2048 --max_num_batched_tokens 2048 --max_gen_toks 256 --enable_expert_parallel 0 --flex_threshold 0.6 --strict_threshold 0.6
+        .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/check_lm_eval.sh --model_name "Qwen/Qwen3.6-35B-A3B" --use_moe_ep_kernel 0 --tensor_parallel_size 8 --max_model_len 2048 --max_num_batched_tokens 2048 --max_gen_toks 1024 --enable_expert_parallel 0 --flex_threshold 0.6 --strict_threshold 0.6 --limit_mm_per_prompt '{"image": 0, "video": 0}' --enable_thinking false
   - label: "tpu7x Record accuracy result for Qwen/Qwen3.6-35B-A3B"
     key: "tpu7x_record_Qwen_Qwen3_6-35B-A3B_Accuracy"
     depends_on: "tpu7x_Qwen_Qwen3_6-35B-A3B_Accuracy"
