@@ -1,0 +1,68 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# pipeline-name: Qwen/Qwen3.6-35B-A3B
+# pipeline-type: text-only
+steps:
+  - label: "${TPU_VERSION:-tpu6e} Unit tests for Qwen/Qwen3.6-35B-A3B"
+    key: "${TPU_VERSION:-tpu6e}_Qwen_Qwen3_6-35B-A3B_UnitTest"
+    agents:
+      queue: "tpu_v7x_8_queue"
+    commands:
+      - |
+        if [ "${TPU_VERSION:-tpu6e}" = "tpu6e" ]; then
+          buildkite-agent meta-data set "${TPU_VERSION:-tpu6e}_Qwen_Qwen3_6-35B-A3B_UnitTest" "not enough HBM"
+        else
+          .buildkite/scripts/run_in_docker.sh \
+            bash -c 'SKIP_JAX_PRECOMPILE=1 VLLM_XLA_CHECK_RECOMPILATION=0 MODEL_IMPL_TYPE=vllm python /workspace/tpu_inference/examples/offline_inference.py --model Qwen/Qwen3.6-35B-A3B --tensor-parallel-size 8 --max-model-len 2048 --max-num-batched-tokens 2048 --max-num-seqs 256'
+        fi
+  - label: "${TPU_VERSION:-tpu6e} Record unit test result for Qwen/Qwen3.6-35B-A3B"
+    key: "${TPU_VERSION:-tpu6e}_record_Qwen_Qwen3_6-35B-A3B_UnitTest"
+    depends_on: "${TPU_VERSION:-tpu6e}_Qwen_Qwen3_6-35B-A3B_UnitTest"
+    env:
+      CI_TPU_VERSION: "${TPU_VERSION:-tpu6e}"
+      CI_TARGET: "Qwen/Qwen3.6-35B-A3B"
+      CI_STAGE: "UnitTest"
+      CI_CATEGORY: "text-only"
+    agents:
+      queue: cpu
+    commands:
+      - |
+        .buildkite/scripts/record_step_result.sh ${TPU_VERSION:-tpu6e}_Qwen_Qwen3_6-35B-A3B_UnitTest
+
+  - label: "${TPU_VERSION:-tpu6e} Accuracy for Qwen/Qwen3.6-35B-A3B"
+    key: "${TPU_VERSION:-tpu6e}_Qwen_Qwen3_6-35B-A3B_Accuracy"
+    depends_on: "${TPU_VERSION:-tpu6e}_record_Qwen_Qwen3_6-35B-A3B_UnitTest"
+    agents:
+      queue: "tpu_v7x_8_queue"
+    commands:
+      - |
+        if [ "${TPU_VERSION:-tpu6e}" = "tpu6e" ]; then
+          buildkite-agent meta-data set "${TPU_VERSION:-tpu6e}_Qwen_Qwen3_6-35B-A3B_Accuracy" "not enough HBM"
+        else
+          .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/check_lm_eval.sh  --model_name "Qwen/Qwen3.6-35B-A3B" --use_moe_ep_kernel 0 --tensor_parallel_size 8 --max_model_len 2048 --max_num_batched_tokens 2048 --max_gen_toks 256 --enable_expert_parallel 0 --flex_threshold 0.6 --strict_threshold 0.6
+        fi
+  - label: "${TPU_VERSION:-tpu6e} Record accuracy result for Qwen/Qwen3.6-35B-A3B"
+    key: "${TPU_VERSION:-tpu6e}_record_Qwen_Qwen3_6-35B-A3B_Accuracy"
+    depends_on: "${TPU_VERSION:-tpu6e}_Qwen_Qwen3_6-35B-A3B_Accuracy"
+    env:
+      CI_TPU_VERSION: "${TPU_VERSION:-tpu6e}"
+      CI_TARGET: "Qwen/Qwen3.6-35B-A3B"
+      CI_STAGE: "Accuracy/Correctness"
+      CI_CATEGORY: "text-only"
+    agents:
+      queue: cpu
+    commands:
+      - |
+        .buildkite/scripts/record_step_result.sh ${TPU_VERSION:-tpu6e}_Qwen_Qwen3_6-35B-A3B_Accuracy
