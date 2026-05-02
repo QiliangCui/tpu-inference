@@ -68,6 +68,17 @@ fi
 echo "=== Validation passed ==="
 
 # Start server in background
+SERVER_CMD="MODEL_IMPL_TYPE=vllm vllm serve $MODEL \
+  --download-dir=/tmp/hf_home \
+  --tensor_parallel_size=$TP \
+  --max-model-len=2048 \
+  --max-num-batched-tokens=$BT \
+  --max-num-seqs=$S \
+  --profiler-config {\"profiler\": \"torch\", \"torch_profiler_dir\": \"$WORKDIR/profile\"}"
+echo "=== Server command ==="
+echo "  $SERVER_CMD"
+echo ""
+
 MODEL_IMPL_TYPE=vllm vllm serve "$MODEL" \
   --download-dir=/tmp/hf_home \
   --tensor_parallel_size=$TP \
@@ -112,7 +123,13 @@ if [ $READY -eq 0 ]; then
 fi
 
 # Run benchmark
-echo "  Running benchmark ($NUM_PROMPTS prompts, ISL=$ISL, OSL=$OSL)..."
+CLIENT_CMD="vllm bench serve --backend vllm --model $MODEL \
+  --dataset-name random --random-input-len $ISL --random-output-len $OSL \
+  --num-prompts $NUM_PROMPTS --profile"
+echo "=== Client command ==="
+echo "  $CLIENT_CMD"
+echo ""
+
 vllm bench serve --backend vllm --model "$MODEL" \
   --dataset-name random --random-input-len $ISL --random-output-len $OSL \
   --num-prompts $NUM_PROMPTS --profile \
