@@ -23,6 +23,50 @@ mkdir -p "$WORKDIR"
 echo "=== Sweep Run: $TAG ==="
 echo "  Model=$MODEL TP=$TP BT=$BT S=$S ISL=$ISL OSL=$OSL prompts=$NUM_PROMPTS"
 
+# --- Validation ---
+echo "=== Validation ==="
+
+# Check TPU devices match TP
+NUM_DEVICES=$(python3 -c "import jax; print(jax.device_count())" 2>/dev/null || echo "0")
+echo "  JAX devices: $NUM_DEVICES, TP requested: $TP"
+if [ "$NUM_DEVICES" -lt "$TP" ]; then
+  echo "  FATAL: Only $NUM_DEVICES devices but TP=$TP requested"
+  exit 1
+fi
+
+# Check vllm and tpu_inference are importable
+VLLM_VER=$(python3 -c "import vllm; print(vllm.__version__)" 2>/dev/null || echo "MISSING")
+TPI_VER=$(python3 -c "import tpu_inference; print(tpu_inference.__version__)" 2>/dev/null || echo "MISSING")
+echo "  vllm=$VLLM_VER tpu_inference=$TPI_VER"
+
+# Check model is downloadable (just tokenizer, fast check)
+python3 -c "
+from transformers import AutoTokenizer
+tok = AutoTokenizer.from_pretrained('$MODEL', cache_dir='/tmp/hf_home', trust_remote_code=True)
+print(f'  Tokenizer loaded: vocab_size={tok.vocab_size}')
+" 2>/dev/null || echo "  WARNING: tokenizer pre-check failed (may still work via vllm)"
+
+# Check GCS is writable
+TEST_GCS="${GCS_BUCKET}/_validation_test"
+if gsutil cp /dev/null "${TEST_GCS}" 2>/dev/null; then
+  gsutil rm "${TEST_GCS}" 2>/dev/null
+  echo "  GCS writable: OK"
+elif gcloud storage cp /dev/null "${TEST_GCS}" 2>/dev/null; then
+  gcloud storage rm "${TEST_GCS}" 2>/dev/null
+  echo "  GCS writable: OK (gcloud)"
+else
+  echo "  WARNING: GCS write test failed — results may not upload"
+fi
+
+# Print all env vars for debugging
+echo "  MAX_MODEL_LEN=2048 ISL=$ISL OSL=$OSL (ISL+OSL=$((ISL+OSL)) must be <= 2048)"
+if [ $((ISL + OSL)) -gt 2048 ]; then
+  echo "  FATAL: ISL+OSL=$((ISL+OSL)) exceeds max-model-len=2048"
+  exit 1
+fi
+
+echo "=== Validation passed ==="
+
 # Start server in background
 MODEL_IMPL_TYPE=vllm vllm serve "$MODEL" \
   --download-dir=/tmp/hf_home \
@@ -42,6 +86,14 @@ for i in $(seq 1 240); do
   if grep -q "Application startup complete" "$WORKDIR/server.log" 2>/dev/null; then
     READY=1
     echo "  Server ready after $((i*5))s"
+    # Verify server picked up correct params
+    echo "  --- Server config verification ---"
+    grep "non-default args" "$WORKDIR/server.log" | head -1 | grep -oP "max_num_batched_tokens=\d+" || true
+    grep "non-default args" "$WORKDIR/server.log" | head -1 | grep -oP "max_num_seqs=\d+" || true
+    grep "non-default args" "$WORKDIR/server.log" | head -1 | grep -oP "tensor_parallel_size=\d+" || true
+    grep "non-default args" "$WORKDIR/server.log" | head -1 | grep -oP "max_seq_len=\d+" || true
+    grep "KV cache size" "$WORKDIR/server.log" | head -1 || true
+    echo "  ---"
     break
   fi
   if ! kill -0 $SERVER_PID 2>/dev/null; then
