@@ -156,27 +156,66 @@ GCS_PATH="${GCS_BUCKET}/${TAG}"
 echo ""
 echo "=== Uploading to $GCS_PATH ==="
 
-# Install gsutil if not available
-if ! command -v gsutil &>/dev/null; then
-  echo "  gsutil not found, trying gcloud..."
-  if command -v gcloud &>/dev/null; then
-    gcloud storage cp "$WORKDIR/server.log" "${GCS_PATH}/server.log"
-    gcloud storage cp "$WORKDIR/client.log" "${GCS_PATH}/client.log"
-    # Upload xprof profile (the plugins/profile one)
-    TRACE=$(find "$WORKDIR/profile" -name "*.trace.json.gz" -path "*/plugins/profile/*" 2>/dev/null | head -1)
-    XPLANE=$(find "$WORKDIR/profile" -name "*.xplane.pb" -path "*/plugins/profile/*" 2>/dev/null | head -1)
-    [ -n "$TRACE" ] && gcloud storage cp "$TRACE" "${GCS_PATH}/trace.json.gz"
-    [ -n "$XPLANE" ] && gcloud storage cp "$XPLANE" "${GCS_PATH}/xplane.pb"
+TRACE=$(find "$WORKDIR/profile" -name "*.trace.json.gz" -path "*/plugins/profile/*" 2>/dev/null | head -1)
+XPLANE=$(find "$WORKDIR/profile" -name "*.xplane.pb" -path "*/plugins/profile/*" 2>/dev/null | head -1)
+
+# Try python3 google-cloud-storage (most likely available in the image)
+python3 -c "
+from google.cloud import storage
+import sys, os
+
+bucket_name = 'vllm-cb-storage2'
+prefix = 'cuiq/sweep/${TAG}'
+client = storage.Client()
+bucket = client.bucket(bucket_name)
+
+files = {
+    'server.log': '${WORKDIR}/server.log',
+    'client.log': '${WORKDIR}/client.log',
+}
+trace = '${TRACE}'
+xplane = '${XPLANE}'
+if trace:
+    files['trace.json.gz'] = trace
+if xplane:
+    files['xplane.pb'] = xplane
+
+for name, path in files.items():
+    if os.path.exists(path):
+        blob = bucket.blob(f'{prefix}/{name}')
+        blob.upload_from_filename(path)
+        print(f'  Uploaded {name} ({os.path.getsize(path)/1e6:.1f} MB)')
+    else:
+        print(f'  SKIP {name} (not found)')
+print('  GCS upload complete')
+" 2>&1 || echo "  WARNING: python GCS upload failed, trying gsutil/gcloud..."
+
+# Fallback to gsutil/gcloud
+if ! python3 -c "from google.cloud import storage" 2>/dev/null; then
+  if command -v gsutil &>/dev/null; then
+    gsutil -m cp "$WORKDIR/server.log" "${GCS_PATH}/server.log" 2>/dev/null
+    gsutil -m cp "$WORKDIR/client.log" "${GCS_PATH}/client.log" 2>/dev/null
+    [ -n "$TRACE" ] && gsutil -m cp "$TRACE" "${GCS_PATH}/trace.json.gz" 2>/dev/null
+    [ -n "$XPLANE" ] && gsutil -m cp "$XPLANE" "${GCS_PATH}/xplane.pb" 2>/dev/null
+  elif command -v gcloud &>/dev/null; then
+    gcloud storage cp "$WORKDIR/server.log" "${GCS_PATH}/server.log" 2>/dev/null
+    gcloud storage cp "$WORKDIR/client.log" "${GCS_PATH}/client.log" 2>/dev/null
+    [ -n "$TRACE" ] && gcloud storage cp "$TRACE" "${GCS_PATH}/trace.json.gz" 2>/dev/null
+    [ -n "$XPLANE" ] && gcloud storage cp "$XPLANE" "${GCS_PATH}/xplane.pb" 2>/dev/null
   else
-    echo "  WARNING: No gsutil or gcloud available, skipping upload"
+    echo "  WARNING: No GCS upload method available"
   fi
-else
-  gsutil -m cp "$WORKDIR/server.log" "${GCS_PATH}/server.log"
-  gsutil -m cp "$WORKDIR/client.log" "${GCS_PATH}/client.log"
-  TRACE=$(find "$WORKDIR/profile" -name "*.trace.json.gz" -path "*/plugins/profile/*" 2>/dev/null | head -1)
-  XPLANE=$(find "$WORKDIR/profile" -name "*.xplane.pb" -path "*/plugins/profile/*" 2>/dev/null | head -1)
-  [ -n "$TRACE" ] && gsutil -m cp "$TRACE" "${GCS_PATH}/trace.json.gz"
-  [ -n "$XPLANE" ] && gsutil -m cp "$XPLANE" "${GCS_PATH}/xplane.pb"
 fi
 
+# Print parseable summary line (can be extracted from Buildkite logs)
+REQ_TPUT=$(grep "Request throughput" "$WORKDIR/client.log" | grep -oP '[\d.]+' | head -1)
+OUT_TPUT=$(grep "Output token throughput" "$WORKDIR/client.log" | grep -oP '[\d.]+' | head -1)
+TTFT=$(grep "Mean TTFT" "$WORKDIR/client.log" | grep -oP '[\d.]+' | head -1)
+TPOT=$(grep "Mean TPOT" "$WORKDIR/client.log" | grep -oP '[\d.]+' | head -1)
+KV_AVG=$(grep "KV cache usage" "$WORKDIR/server.log" | grep -oP '[\d.]+(?=%)' | awk '{s+=$1; n++} END {if(n>0) printf "%.1f", s/n; else print "N/A"}')
+RUNNING_AVG=$(grep "Running:" "$WORKDIR/server.log" | grep -oP 'Running: \K[\d]+' | awk '{s+=$1; n++} END {if(n>0) printf "%.0f", s/n; else print "N/A"}')
+
+echo ""
+echo "SWEEP_RESULT|${TAG}|${BT}|${S}|${REQ_TPUT}|${OUT_TPUT}|${TTFT}|${TPOT}|${KV_AVG}|${RUNNING_AVG}"
+echo ""
 echo "=== Done: $TAG ==="
