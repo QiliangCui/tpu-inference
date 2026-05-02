@@ -1,6 +1,6 @@
-# Dev pipeline — Full Profile Sweep (64 jobs)
-# Sweeps max-num-batched-tokens × max-num-seqs for 4 models.
-# Results uploaded to gs://vllm-cb-storage2/cuiq/sweep/
+# Dev pipeline — MoE Backend Validation (3 jobs)
+# Validate TP / GMM_EP / fused_ep_moe for Qwen3-Coder-30B-A3B-Instruct
+# ISL=8192, OSL=1024, max-model-len=10240
 
 steps:
 
@@ -13,86 +13,9 @@ steps:
     commands:
       - bash -c 'source .buildkite/scripts/setup_docker_env.sh && setup_environment "vllm-tpu" "false" "true"'
 
-  # -----------------------------------------------------------------
-  # Sweep: Qwen3-4B (TP=2, 2-chip queue)
-  # -----------------------------------------------------------------
-  - label: "sweep Qwen3-4B bt{{matrix.bt}} s{{matrix.s}}"
-    key: sweep_qwen3_4b
-    depends_on: tpu7x_build_docker
-    agents:
-      queue: tpu_v7x_2_queue
-    env:
-      USE_PREBUILT_IMAGE: "1"
-      TPU_VERSION: "tpu7x"
-      TEST_MODEL: "Qwen/Qwen3-4B"
-      TENSOR_PARALLEL_SIZE: "2"
-      MAX_NUM_BATCHED_TOKENS: "{{matrix.bt}}"
-      MAX_NUM_SEQS: "{{matrix.s}}"
-      INPUT_LEN: "1800"
-      OUTPUT_LEN: "128"
-      NUM_PROMPTS: "1000"
-    matrix:
-      setup:
-        bt: ["256", "512", "1024", "2048"]
-        s: ["64", "128", "256", "512"]
-    commands:
-      - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh
-
-  # -----------------------------------------------------------------
-  # Sweep: Qwen2.5-32B (TP=8, 8-chip queue)
-  # -----------------------------------------------------------------
-  - label: "sweep Qwen2.5-32B bt{{matrix.bt}} s{{matrix.s}}"
-    key: sweep_qwen2_5_32b
-    depends_on: tpu7x_build_docker
-    agents:
-      queue: tpu_v7x_8_queue
-    env:
-      USE_PREBUILT_IMAGE: "1"
-      TPU_VERSION: "tpu7x"
-      TEST_MODEL: "Qwen/Qwen2.5-32B"
-      TENSOR_PARALLEL_SIZE: "8"
-      MAX_NUM_BATCHED_TOKENS: "{{matrix.bt}}"
-      MAX_NUM_SEQS: "{{matrix.s}}"
-      INPUT_LEN: "1800"
-      OUTPUT_LEN: "128"
-      NUM_PROMPTS: "1000"
-    matrix:
-      setup:
-        bt: ["256", "512", "1024", "2048"]
-        s: ["64", "128", "256", "512"]
-    commands:
-      - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh
-
-  # -----------------------------------------------------------------
-  # Sweep: Llama-3.1-70B-Instruct (TP=8, 8-chip queue)
-  # -----------------------------------------------------------------
-  - label: "sweep Llama-3.1-70B bt{{matrix.bt}} s{{matrix.s}}"
-    key: sweep_llama_70b
-    depends_on: tpu7x_build_docker
-    agents:
-      queue: tpu_v7x_8_queue
-    env:
-      USE_PREBUILT_IMAGE: "1"
-      TPU_VERSION: "tpu7x"
-      TEST_MODEL: "meta-llama/Llama-3.1-70B-Instruct"
-      TENSOR_PARALLEL_SIZE: "8"
-      MAX_NUM_BATCHED_TOKENS: "{{matrix.bt}}"
-      MAX_NUM_SEQS: "{{matrix.s}}"
-      INPUT_LEN: "1800"
-      OUTPUT_LEN: "128"
-      NUM_PROMPTS: "1000"
-    matrix:
-      setup:
-        bt: ["256", "512", "1024", "2048"]
-        s: ["64", "128", "256", "512"]
-    commands:
-      - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh
-
-  # -----------------------------------------------------------------
-  # Sweep: Qwen3-Coder-30B-A3B (MoE, TP=8, 8-chip queue)
-  # -----------------------------------------------------------------
-  - label: "sweep Qwen3-Coder-30B-A3B bt{{matrix.bt}} s{{matrix.s}}"
-    key: sweep_qwen3_coder
+  # Track A: TP (default, no EP)
+  - label: "VALIDATE Qwen3-Coder TP bt1024 s128"
+    key: validate_tp
     depends_on: tpu7x_build_docker
     agents:
       queue: tpu_v7x_8_queue
@@ -101,14 +24,55 @@ steps:
       TPU_VERSION: "tpu7x"
       TEST_MODEL: "Qwen/Qwen3-Coder-30B-A3B-Instruct"
       TENSOR_PARALLEL_SIZE: "8"
-      MAX_NUM_BATCHED_TOKENS: "{{matrix.bt}}"
-      MAX_NUM_SEQS: "{{matrix.s}}"
-      INPUT_LEN: "1800"
-      OUTPUT_LEN: "128"
-      NUM_PROMPTS: "1000"
-    matrix:
-      setup:
-        bt: ["256", "512", "1024", "2048"]
-        s: ["64", "128", "256", "512"]
+      MAX_NUM_BATCHED_TOKENS: "1024"
+      MAX_NUM_SEQS: "128"
+      MAX_MODEL_LEN: "10240"
+      INPUT_LEN: "8192"
+      OUTPUT_LEN: "1024"
+      NUM_PROMPTS: "50"
+      ENABLE_EXPERT_PARALLEL: "0"
+    commands:
+      - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh
+
+  # Track B: GMM_EP
+  - label: "VALIDATE Qwen3-Coder GMM_EP bt1024 s128"
+    key: validate_gmm_ep
+    depends_on: tpu7x_build_docker
+    agents:
+      queue: tpu_v7x_8_queue
+    env:
+      USE_PREBUILT_IMAGE: "1"
+      TPU_VERSION: "tpu7x"
+      TEST_MODEL: "Qwen/Qwen3-Coder-30B-A3B-Instruct"
+      TENSOR_PARALLEL_SIZE: "8"
+      MAX_NUM_BATCHED_TOKENS: "1024"
+      MAX_NUM_SEQS: "128"
+      MAX_MODEL_LEN: "10240"
+      INPUT_LEN: "8192"
+      OUTPUT_LEN: "1024"
+      NUM_PROMPTS: "50"
+      ENABLE_EXPERT_PARALLEL: "1"
+    commands:
+      - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh
+
+  # Track C: fused_ep_moe
+  - label: "VALIDATE Qwen3-Coder fused_ep_moe bt1024 s128"
+    key: validate_fused_ep
+    depends_on: tpu7x_build_docker
+    agents:
+      queue: tpu_v7x_8_queue
+    env:
+      USE_PREBUILT_IMAGE: "1"
+      TPU_VERSION: "tpu7x"
+      TEST_MODEL: "Qwen/Qwen3-Coder-30B-A3B-Instruct"
+      TENSOR_PARALLEL_SIZE: "8"
+      MAX_NUM_BATCHED_TOKENS: "1024"
+      MAX_NUM_SEQS: "128"
+      MAX_MODEL_LEN: "10240"
+      INPUT_LEN: "8192"
+      OUTPUT_LEN: "1024"
+      NUM_PROMPTS: "50"
+      ENABLE_EXPERT_PARALLEL: "1"
+      USE_MOE_EP_KERNEL: "1"
     commands:
       - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh

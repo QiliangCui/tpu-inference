@@ -12,11 +12,23 @@ BT="${MAX_NUM_BATCHED_TOKENS:?MAX_NUM_BATCHED_TOKENS required}"
 S="${MAX_NUM_SEQS:?MAX_NUM_SEQS required}"
 ISL="${INPUT_LEN:-1800}"
 OSL="${OUTPUT_LEN:-128}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-2048}"
 NUM_PROMPTS="${NUM_PROMPTS:-1000}"
 GCS_BUCKET="${GCS_BUCKET:-gs://vllm-cb-storage2/cuiq/sweep}"
+ENABLE_EP="${ENABLE_EXPERT_PARALLEL:-0}"
+# USE_MOE_EP_KERNEL is read directly as env var by tpu_inference
 
 MODEL_SHORT=$(echo "$MODEL" | sed 's|.*/||' | tr '[:upper:]' '[:lower:]' | tr '-' '_')
-TAG="${MODEL_SHORT}_bt${BT}_s${S}"
+
+# Determine track name
+if [ "${USE_MOE_EP_KERNEL:-0}" = "1" ] && [ "$ENABLE_EP" = "1" ]; then
+  TRACK="fused_ep"
+elif [ "$ENABLE_EP" = "1" ]; then
+  TRACK="gmm_ep"
+else
+  TRACK="tp"
+fi
+TAG="${MODEL_SHORT}_${TRACK}_bt${BT}_s${S}"
 WORKDIR="/tmp/sweep_${TAG}"
 mkdir -p "$WORKDIR"
 
@@ -59,21 +71,29 @@ else
 fi
 
 # Print all env vars for debugging
-echo "  MAX_MODEL_LEN=2048 ISL=$ISL OSL=$OSL (ISL+OSL=$((ISL+OSL)) must be <= 2048)"
-if [ $((ISL + OSL)) -gt 2048 ]; then
-  echo "  FATAL: ISL+OSL=$((ISL+OSL)) exceeds max-model-len=2048"
+echo "  MAX_MODEL_LEN=$MAX_MODEL_LEN ISL=$ISL OSL=$OSL (ISL+OSL=$((ISL+OSL)) must be <= $MAX_MODEL_LEN)"
+echo "  TRACK=$TRACK ENABLE_EP=$ENABLE_EP USE_MOE_EP_KERNEL=${USE_MOE_EP_KERNEL:-0}"
+if [ $((ISL + OSL)) -gt "$MAX_MODEL_LEN" ]; then
+  echo "  FATAL: ISL+OSL=$((ISL+OSL)) exceeds max-model-len=$MAX_MODEL_LEN"
   exit 1
 fi
 
 echo "=== Validation passed ==="
 
+# Build EP flag
+EP_FLAG=""
+if [ "$ENABLE_EP" = "1" ]; then
+  EP_FLAG="--enable-expert-parallel"
+fi
+
 # Start server in background
-SERVER_CMD="MODEL_IMPL_TYPE=vllm vllm serve $MODEL \
+SERVER_CMD="MODEL_IMPL_TYPE=vllm USE_MOE_EP_KERNEL=${USE_MOE_EP_KERNEL:-0} vllm serve $MODEL \
   --download-dir=/tmp/hf_home \
   --tensor_parallel_size=$TP \
-  --max-model-len=2048 \
+  --max-model-len=$MAX_MODEL_LEN \
   --max-num-batched-tokens=$BT \
   --max-num-seqs=$S \
+  $EP_FLAG \
   --profiler-config {\"profiler\": \"torch\", \"torch_profiler_dir\": \"$WORKDIR/profile\"}"
 echo "=== Server command ==="
 echo "  $SERVER_CMD"
@@ -82,9 +102,10 @@ echo ""
 MODEL_IMPL_TYPE=vllm vllm serve "$MODEL" \
   --download-dir=/tmp/hf_home \
   --tensor_parallel_size=$TP \
-  --max-model-len=2048 \
+  --max-model-len=$MAX_MODEL_LEN \
   --max-num-batched-tokens=$BT \
   --max-num-seqs=$S \
+  $EP_FLAG \
   --profiler-config "{\"profiler\": \"torch\", \"torch_profiler_dir\": \"$WORKDIR/profile\"}" \
   > "$WORKDIR/server.log" 2>&1 &
 SERVER_PID=$!
