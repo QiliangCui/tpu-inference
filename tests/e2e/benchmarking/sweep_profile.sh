@@ -112,16 +112,26 @@ echo "=== Server command ==="
 echo "  $SERVER_CMD"
 echo ""
 
-MODEL_IMPL_TYPE=vllm USE_MOE_EP_KERNEL=${USE_MOE_EP_KERNEL:-0} \
-  ${PROFILER_ENV:+$PROFILER_ENV} \
-  vllm serve "$MODEL" \
+# Export profiling env vars for the server process
+export MODEL_IMPL_TYPE=vllm
+export USE_MOE_EP_KERNEL=${USE_MOE_EP_KERNEL:-0}
+if [ -n "${PHASED_PROFILING_DIR:-}" ]; then
+  export PHASED_PROFILING_DIR="$WORKDIR/phased_profile"
+fi
+
+PROFILER_CONFIG_ARG=""
+if [ -z "${PHASED_PROFILING_DIR:-}" ]; then
+  PROFILER_CONFIG_ARG="--profiler-config {\"profiler\": \"torch\", \"torch_profiler_dir\": \"$WORKDIR/profile\"}"
+fi
+
+vllm serve "$MODEL" \
   --download-dir=/tmp/hf_home \
   --tensor_parallel_size=$TP \
   --max-model-len=$MAX_MODEL_LEN \
   --max-num-batched-tokens=$BT \
   --max-num-seqs=$S \
   $EP_FLAG \
-  ${PROFILER_ARGS:+--profiler-config "{\"profiler\": \"torch\", \"torch_profiler_dir\": \"$WORKDIR/profile\"}"} \
+  $PROFILER_CONFIG_ARG \
   > "$WORKDIR/server.log" 2>&1 &
 SERVER_PID=$!
 
