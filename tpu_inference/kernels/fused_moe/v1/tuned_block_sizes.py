@@ -347,6 +347,18 @@ TUNED_BLOCK_SIZES = {
         256 * 8,
         256 * 6,
     ),
+    # Qwen3-Coder-30B-A3B-Instruct (hidden=2048, intermediate=768, 128 experts, top_k=8, bf16)
+    # Default gives btc=64 which underutilizes MXU. Increase btc to 128.
+    (2048, 768, 128, 8, 2, 2, 2048, 8): (
+        128,   # bt
+        384,   # bf (= intermediate/2)
+        1024,  # bd1 (= hidden/2)
+        1024,  # bd2 (= hidden/2)
+        128,   # btc (doubled from default 64)
+        384,   # bfc
+        1024,  # bd1c
+        1024,  # bd2c
+    ),
 }
 
 

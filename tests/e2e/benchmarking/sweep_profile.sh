@@ -86,27 +86,42 @@ if [ "$ENABLE_EP" = "1" ]; then
   EP_FLAG="--enable-expert-parallel"
 fi
 
+# Build profiler args
+PROFILER_ARGS=""
+PROFILER_ENV=""
+if [ -n "${PHASED_PROFILING_DIR:-}" ]; then
+  # Use phased profiling (auto-captures decode/prefill phases, gets device traces)
+  PROFILER_ENV="PHASED_PROFILING_DIR=$WORKDIR/phased_profile"
+  mkdir -p "$WORKDIR/phased_profile"
+  echo "  Using PHASED_PROFILING_DIR for device-level profiling"
+else
+  # Use --profiler-config (client-triggered)
+  PROFILER_ARGS="--profiler-config {\"profiler\": \"torch\", \"torch_profiler_dir\": \"$WORKDIR/profile\"}"
+fi
+
 # Start server in background
-SERVER_CMD="MODEL_IMPL_TYPE=vllm USE_MOE_EP_KERNEL=${USE_MOE_EP_KERNEL:-0} vllm serve $MODEL \
+SERVER_CMD="MODEL_IMPL_TYPE=vllm USE_MOE_EP_KERNEL=${USE_MOE_EP_KERNEL:-0} $PROFILER_ENV vllm serve $MODEL \
   --download-dir=/tmp/hf_home \
   --tensor_parallel_size=$TP \
   --max-model-len=$MAX_MODEL_LEN \
   --max-num-batched-tokens=$BT \
   --max-num-seqs=$S \
   $EP_FLAG \
-  --profiler-config {\"profiler\": \"torch\", \"torch_profiler_dir\": \"$WORKDIR/profile\"}"
+  $PROFILER_ARGS"
 echo "=== Server command ==="
 echo "  $SERVER_CMD"
 echo ""
 
-MODEL_IMPL_TYPE=vllm vllm serve "$MODEL" \
+MODEL_IMPL_TYPE=vllm USE_MOE_EP_KERNEL=${USE_MOE_EP_KERNEL:-0} \
+  ${PROFILER_ENV:+$PROFILER_ENV} \
+  vllm serve "$MODEL" \
   --download-dir=/tmp/hf_home \
   --tensor_parallel_size=$TP \
   --max-model-len=$MAX_MODEL_LEN \
   --max-num-batched-tokens=$BT \
   --max-num-seqs=$S \
   $EP_FLAG \
-  --profiler-config "{\"profiler\": \"torch\", \"torch_profiler_dir\": \"$WORKDIR/profile\"}" \
+  ${PROFILER_ARGS:+--profiler-config "{\"profiler\": \"torch\", \"torch_profiler_dir\": \"$WORKDIR/profile\"}"} \
   > "$WORKDIR/server.log" 2>&1 &
 SERVER_PID=$!
 
@@ -144,16 +159,20 @@ if [ $READY -eq 0 ]; then
 fi
 
 # Run benchmark
+PROFILE_FLAG=""
+if [ -z "${PHASED_PROFILING_DIR:-}" ]; then
+  PROFILE_FLAG="--profile"
+fi
 CLIENT_CMD="vllm bench serve --backend vllm --model $MODEL \
   --dataset-name random --random-input-len $ISL --random-output-len $OSL \
-  --num-prompts $NUM_PROMPTS --profile"
+  --num-prompts $NUM_PROMPTS $PROFILE_FLAG"
 echo "=== Client command ==="
 echo "  $CLIENT_CMD"
 echo ""
 
 vllm bench serve --backend vllm --model "$MODEL" \
   --dataset-name random --random-input-len $ISL --random-output-len $OSL \
-  --num-prompts $NUM_PROMPTS --profile \
+  --num-prompts $NUM_PROMPTS $PROFILE_FLAG \
   > "$WORKDIR/client.log" 2>&1
 BENCH_EXIT=$?
 
@@ -177,8 +196,9 @@ GCS_PATH="${GCS_BUCKET}/${TAG}"
 echo ""
 echo "=== Uploading to $GCS_PATH ==="
 
-TRACE=$(find "$WORKDIR/profile" -name "*.trace.json.gz" -path "*/plugins/profile/*" 2>/dev/null | head -1)
-XPLANE=$(find "$WORKDIR/profile" -name "*.xplane.pb" -path "*/plugins/profile/*" 2>/dev/null | head -1)
+# Find traces from either --profiler-config or PHASED_PROFILING_DIR
+TRACE=$(find "$WORKDIR" -name "*.trace.json.gz" -path "*/plugins/profile/*" 2>/dev/null | head -1)
+XPLANE=$(find "$WORKDIR" -name "*.xplane.pb" -path "*/plugins/profile/*" 2>/dev/null | head -1)
 
 # Try python3 google-cloud-storage (most likely available in the image)
 python3 -c "
