@@ -1,6 +1,6 @@
 # Dev pipeline — Attempt 2: 480B Qwen3-Coder GMM_EP vs fused_EP
 # Uses same model as CI: Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8
-# ISL=1024/OSL=8192 matches CI benchmark (bm_qwen3_coder.sh)
+# Two configs: ISL=8K/OSL=1K (key scenario) + ISL=1K/OSL=8K (CI benchmark)
 
 steps:
 
@@ -57,6 +57,63 @@ steps:
       INPUT_LEN: "1024"
       OUTPUT_LEN: "8192"
       NUM_PROMPTS: "320"
+      ENABLE_EXPERT_PARALLEL: "1"
+      USE_MOE_EP_KERNEL: "1"
+      KV_CACHE_DTYPE: "fp8"
+      GPU_MEMORY_UTILIZATION: "0.95"
+      MAX_CONCURRENCY: "64"
+      RANDOM_RANGE_RATIO: "0.8"
+      REQUEST_RATE: "inf"
+      EXTRA_SERVER_ARGS: "--seed=42 --no-enable-prefix-caching --async-scheduling"
+    commands:
+      - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh
+
+  # === KEY SCENARIO: ISL=8192, OSL=1024 (where we saw 20x MoE gap on 30B) ===
+
+  # 480B GMM_EP ISL=8K OSL=1K
+  - label: "480B GMM_EP ISL8192-OSL1024"
+    key: 480b_gmm_ep_8k1k
+    depends_on: tpu7x_build_docker
+    agents:
+      queue: tpu_v7x_8_queue
+    env:
+      USE_PREBUILT_IMAGE: "1"
+      TPU_VERSION: "tpu7x"
+      TEST_MODEL: "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8"
+      TENSOR_PARALLEL_SIZE: "8"
+      MAX_NUM_BATCHED_TOKENS: "8192"
+      MAX_NUM_SEQS: "512"
+      MAX_MODEL_LEN: "10240"
+      INPUT_LEN: "8192"
+      OUTPUT_LEN: "1024"
+      NUM_PROMPTS: "100"
+      ENABLE_EXPERT_PARALLEL: "1"
+      KV_CACHE_DTYPE: "fp8"
+      GPU_MEMORY_UTILIZATION: "0.95"
+      MAX_CONCURRENCY: "64"
+      RANDOM_RANGE_RATIO: "0.8"
+      REQUEST_RATE: "inf"
+      EXTRA_SERVER_ARGS: "--seed=42 --no-enable-prefix-caching --async-scheduling"
+    commands:
+      - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh
+
+  # 480B fused_EP ISL=8K OSL=1K
+  - label: "480B fused_EP ISL8192-OSL1024"
+    key: 480b_fused_ep_8k1k
+    depends_on: tpu7x_build_docker
+    agents:
+      queue: tpu_v7x_8_queue
+    env:
+      USE_PREBUILT_IMAGE: "1"
+      TPU_VERSION: "tpu7x"
+      TEST_MODEL: "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8"
+      TENSOR_PARALLEL_SIZE: "8"
+      MAX_NUM_BATCHED_TOKENS: "8192"
+      MAX_NUM_SEQS: "512"
+      MAX_MODEL_LEN: "10240"
+      INPUT_LEN: "8192"
+      OUTPUT_LEN: "1024"
+      NUM_PROMPTS: "100"
       ENABLE_EXPERT_PARALLEL: "1"
       USE_MOE_EP_KERNEL: "1"
       KV_CACHE_DTYPE: "fp8"
