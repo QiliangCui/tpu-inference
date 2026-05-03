@@ -1,6 +1,6 @@
-# Dev pipeline — MoE Backend Full Sweep
-# Qwen3-Coder-30B-A3B-Instruct: TP vs GMM_EP vs fused_ep_moe
-# ISL=8192, OSL=1024, max-model-len=10240, 1000 prompts
+# Dev pipeline — Attempt 2: 480B model test + 30B block size sweep
+# Phase B: 480B Qwen3-Coder with real production config (GMM_EP vs fused_EP)
+# Phase C: 30B block size sweep (btc variations)
 
 steps:
 
@@ -13,84 +13,116 @@ steps:
     commands:
       - bash -c 'source .buildkite/scripts/setup_docker_env.sh && setup_environment "vllm-tpu" "false" "true"'
 
-  # -----------------------------------------------------------------
-  # Track A: TP (default, no EP)
-  # -----------------------------------------------------------------
-  - label: "TP bt{{matrix.bt}} s{{matrix.s}}"
-    key: sweep_tp
-    depends_on: tpu7x_build_docker
-    agents:
-      queue: tpu_v7x_8_queue
-    env:
-      USE_PREBUILT_IMAGE: "1"
-      TPU_VERSION: "tpu7x"
-      TEST_MODEL: "Qwen/Qwen3-Coder-30B-A3B-Instruct"
-      TENSOR_PARALLEL_SIZE: "8"
-      MAX_NUM_BATCHED_TOKENS: "{{matrix.bt}}"
-      MAX_NUM_SEQS: "{{matrix.s}}"
-      MAX_MODEL_LEN: "10240"
-      INPUT_LEN: "8192"
-      OUTPUT_LEN: "1024"
-      NUM_PROMPTS: "1000"
-      ENABLE_EXPERT_PARALLEL: "0"
-    matrix:
-      setup:
-        bt: ["512", "1024", "2048", "4096", "8192"]
-        s: ["128", "256"]
-    commands:
-      - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh
+  # =================================================================
+  # Phase B: 480B model — real production config
+  # =================================================================
 
-  # -----------------------------------------------------------------
-  # Track B: GMM_EP
-  # -----------------------------------------------------------------
-  - label: "GMM_EP bt{{matrix.bt}} s{{matrix.s}}"
-    key: sweep_gmm_ep
+  # 480B GMM_EP (the baseline to beat)
+  - label: "480B GMM_EP ISL1024"
+    key: 480b_gmm_ep_isl1024
     depends_on: tpu7x_build_docker
     agents:
       queue: tpu_v7x_8_queue
     env:
       USE_PREBUILT_IMAGE: "1"
       TPU_VERSION: "tpu7x"
-      TEST_MODEL: "Qwen/Qwen3-Coder-30B-A3B-Instruct"
+      TEST_MODEL: "BCCard/Qwen3-Coder-480B-A35B-Instruct-FP8-Dynamic"
       TENSOR_PARALLEL_SIZE: "8"
-      MAX_NUM_BATCHED_TOKENS: "{{matrix.bt}}"
-      MAX_NUM_SEQS: "{{matrix.s}}"
+      MAX_NUM_BATCHED_TOKENS: "8192"
+      MAX_NUM_SEQS: "512"
       MAX_MODEL_LEN: "10240"
-      INPUT_LEN: "8192"
+      INPUT_LEN: "1024"
       OUTPUT_LEN: "1024"
-      NUM_PROMPTS: "1000"
+      NUM_PROMPTS: "320"
       ENABLE_EXPERT_PARALLEL: "1"
-    matrix:
-      setup:
-        bt: ["512", "1024", "2048", "4096", "8192"]
-        s: ["128", "256"]
+      KV_CACHE_DTYPE: "fp8"
+      GPU_MEMORY_UTILIZATION: "0.95"
+      MAX_CONCURRENCY: "64"
+      RANDOM_RANGE_RATIO: "0.8"
+      REQUEST_RATE: "inf"
+      EXTRA_SERVER_ARGS: "--seed=42 --no-enable-prefix-caching --async-scheduling"
     commands:
       - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh
 
-  # -----------------------------------------------------------------
-  # Track C: fused_ep_moe
-  # -----------------------------------------------------------------
-  - label: "fused_EP bt{{matrix.bt}} s{{matrix.s}}"
-    key: sweep_fused_ep
+  # 480B fused_EP
+  - label: "480B fused_EP ISL1024"
+    key: 480b_fused_ep_isl1024
     depends_on: tpu7x_build_docker
     agents:
       queue: tpu_v7x_8_queue
     env:
       USE_PREBUILT_IMAGE: "1"
       TPU_VERSION: "tpu7x"
-      TEST_MODEL: "Qwen/Qwen3-Coder-30B-A3B-Instruct"
+      TEST_MODEL: "BCCard/Qwen3-Coder-480B-A35B-Instruct-FP8-Dynamic"
       TENSOR_PARALLEL_SIZE: "8"
-      MAX_NUM_BATCHED_TOKENS: "{{matrix.bt}}"
-      MAX_NUM_SEQS: "{{matrix.s}}"
+      MAX_NUM_BATCHED_TOKENS: "8192"
+      MAX_NUM_SEQS: "512"
       MAX_MODEL_LEN: "10240"
-      INPUT_LEN: "8192"
+      INPUT_LEN: "1024"
       OUTPUT_LEN: "1024"
-      NUM_PROMPTS: "1000"
+      NUM_PROMPTS: "320"
       ENABLE_EXPERT_PARALLEL: "1"
       USE_MOE_EP_KERNEL: "1"
-    matrix:
-      setup:
-        bt: ["512", "1024", "2048", "4096", "8192"]
-        s: ["128", "256"]
+      KV_CACHE_DTYPE: "fp8"
+      GPU_MEMORY_UTILIZATION: "0.95"
+      MAX_CONCURRENCY: "64"
+      RANDOM_RANGE_RATIO: "0.8"
+      REQUEST_RATE: "inf"
+      EXTRA_SERVER_ARGS: "--seed=42 --no-enable-prefix-caching --async-scheduling"
+    commands:
+      - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh
+
+  # 480B GMM_EP with ISL=8K (for comparison with 30B results)
+  - label: "480B GMM_EP ISL8192"
+    key: 480b_gmm_ep_isl8192
+    depends_on: tpu7x_build_docker
+    agents:
+      queue: tpu_v7x_8_queue
+    env:
+      USE_PREBUILT_IMAGE: "1"
+      TPU_VERSION: "tpu7x"
+      TEST_MODEL: "BCCard/Qwen3-Coder-480B-A35B-Instruct-FP8-Dynamic"
+      TENSOR_PARALLEL_SIZE: "8"
+      MAX_NUM_BATCHED_TOKENS: "8192"
+      MAX_NUM_SEQS: "512"
+      MAX_MODEL_LEN: "10240"
+      INPUT_LEN: "8192"
+      OUTPUT_LEN: "1024"
+      NUM_PROMPTS: "100"
+      ENABLE_EXPERT_PARALLEL: "1"
+      KV_CACHE_DTYPE: "fp8"
+      GPU_MEMORY_UTILIZATION: "0.95"
+      MAX_CONCURRENCY: "64"
+      RANDOM_RANGE_RATIO: "0.8"
+      REQUEST_RATE: "inf"
+      EXTRA_SERVER_ARGS: "--seed=42 --no-enable-prefix-caching --async-scheduling"
+    commands:
+      - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh
+
+  # 480B fused_EP with ISL=8K
+  - label: "480B fused_EP ISL8192"
+    key: 480b_fused_ep_isl8192
+    depends_on: tpu7x_build_docker
+    agents:
+      queue: tpu_v7x_8_queue
+    env:
+      USE_PREBUILT_IMAGE: "1"
+      TPU_VERSION: "tpu7x"
+      TEST_MODEL: "BCCard/Qwen3-Coder-480B-A35B-Instruct-FP8-Dynamic"
+      TENSOR_PARALLEL_SIZE: "8"
+      MAX_NUM_BATCHED_TOKENS: "8192"
+      MAX_NUM_SEQS: "512"
+      MAX_MODEL_LEN: "10240"
+      INPUT_LEN: "8192"
+      OUTPUT_LEN: "1024"
+      NUM_PROMPTS: "100"
+      ENABLE_EXPERT_PARALLEL: "1"
+      USE_MOE_EP_KERNEL: "1"
+      KV_CACHE_DTYPE: "fp8"
+      GPU_MEMORY_UTILIZATION: "0.95"
+      MAX_CONCURRENCY: "64"
+      RANDOM_RANGE_RATIO: "0.8"
+      REQUEST_RATE: "inf"
+      EXTRA_SERVER_ARGS: "--seed=42 --no-enable-prefix-caching --async-scheduling"
     commands:
       - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh
