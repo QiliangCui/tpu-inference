@@ -133,21 +133,30 @@ if [ -n "${PHASED_PROFILING_DIR:-}" ]; then
   export PHASED_PROFILING_DIR="$WORKDIR/phased_profile"
 fi
 
-PROFILER_CONFIG_ARG=""
+# Build the full server command as an array to preserve quoting
+SERVER_ARGS=(
+  --download-dir=/tmp/hf_home
+  --tensor_parallel_size=$TP
+  --max-model-len=$MAX_MODEL_LEN
+  --max-num-batched-tokens=$BT
+  --max-num-seqs=$S
+)
+[ -n "$EP_FLAG" ] && SERVER_ARGS+=($EP_FLAG)
+[ -n "$KV_CACHE_DTYPE" ] && SERVER_ARGS+=(--kv-cache-dtype=$KV_CACHE_DTYPE)
+[ -n "$GPU_MEM_UTIL" ] && SERVER_ARGS+=(--gpu-memory-utilization=$GPU_MEM_UTIL)
+# Add extra server args (split by spaces)
+for arg in $EXTRA_SERVER_ARGS; do
+  SERVER_ARGS+=("$arg")
+done
+# Add profiler config (properly quoted JSON)
 if [ -z "${PHASED_PROFILING_DIR:-}" ]; then
-  PROFILER_CONFIG_ARG="--profiler-config {\"profiler\": \"torch\", \"torch_profiler_dir\": \"$WORKDIR/profile\"}"
+  SERVER_ARGS+=(--profiler-config "{\"profiler\": \"torch\", \"torch_profiler_dir\": \"$WORKDIR/profile\"}")
 fi
 
-vllm serve "$MODEL" \
-  --download-dir=/tmp/hf_home \
-  --tensor_parallel_size=$TP \
-  --max-model-len=$MAX_MODEL_LEN \
-  --max-num-batched-tokens=$BT \
-  --max-num-seqs=$S \
-  $EP_FLAG \
-  $OPT_SERVER_FLAGS \
-  $PROFILER_CONFIG_ARG \
-  > "$WORKDIR/server.log" 2>&1 &
+echo "=== Server args ==="
+echo "  ${SERVER_ARGS[*]}"
+
+vllm serve "$MODEL" "${SERVER_ARGS[@]}" > "$WORKDIR/server.log" 2>&1 &
 SERVER_PID=$!
 
 echo "  Server PID=$SERVER_PID, waiting for ready..."
