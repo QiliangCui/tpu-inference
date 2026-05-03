@@ -161,9 +161,9 @@ SERVER_PID=$!
 
 echo "  Server PID=$SERVER_PID, waiting for ready..."
 
-# Wait for server (up to 20 min for large models)
+# Wait for server (up to 45 min for large models like 480B which compile many sizes ~85s each)
 READY=0
-for i in $(seq 1 240); do
+for i in $(seq 1 540); do
   if grep -q "Application startup complete" "$WORKDIR/server.log" 2>/dev/null; then
     READY=1
     echo "  Server ready after $((i*5))s"
@@ -186,7 +186,7 @@ for i in $(seq 1 240); do
 done
 
 if [ $READY -eq 0 ]; then
-  echo "  ERROR: Server not ready after 20min"
+  echo "  ERROR: Server not ready after 45min"
   tail -20 "$WORKDIR/server.log"
   kill -9 $SERVER_PID 2>/dev/null || true
   exit 1
