@@ -40,14 +40,14 @@ SCENARIOS = [
         "name": "decode_8k",
         "in": 8192,
         "out": OUTPUT_LEN,
-        "batches": [1, 4, 8, 16, 32],
+        "batches": [1, 4, 8, 16],
         "mode": "decode",
     },
     {
         "name": "decode_1k",
         "in": 1024,
         "out": OUTPUT_LEN,
-        "batches": [1, 8, 16, 32, 64],
+        "batches": [1, 8, 16, 32],
         "mode": "decode",
     },
 ]

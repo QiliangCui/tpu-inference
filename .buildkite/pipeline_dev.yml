@@ -251,7 +251,7 @@ steps:
       TPU_VERSION: "tpu7x"
       USE_MOE_EP_KERNEL: "0"
     commands:
-      - .buildkite/scripts/run_in_docker.sh python3 /workspace/tpu_inference/tests/e2e/benchmarking/decode_bench.py --model Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8 --download-dir /tmp/hf_home --tensor-parallel-size 8 --enable-expert-parallel --max-model-len 10240 --max-num-batched-tokens 8192 --max-num-seqs 512 --kv-cache-dtype fp8 --gpu-memory-utilization 0.95 --seed 42
+      - .buildkite/scripts/run_in_docker.sh python3 /workspace/tpu_inference/tests/e2e/benchmarking/decode_bench.py --model Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8 --download-dir /tmp/hf_home --tensor-parallel-size 8 --enable-expert-parallel --max-model-len 10240 --max-num-batched-tokens 8192 --max-num-seqs 512 --kv-cache-dtype fp8 --gpu-memory-utilization 0.85 --seed 42
 
   - label: "DECODE fused_EP (offline)"
     key: decode_fused
@@ -263,4 +263,4 @@ steps:
       TPU_VERSION: "tpu7x"
       USE_MOE_EP_KERNEL: "1"
     commands:
-      - .buildkite/scripts/run_in_docker.sh python3 /workspace/tpu_inference/tests/e2e/benchmarking/decode_bench.py --model Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8 --download-dir /tmp/hf_home --tensor-parallel-size 8 --enable-expert-parallel --max-model-len 10240 --max-num-batched-tokens 8192 --max-num-seqs 512 --kv-cache-dtype fp8 --gpu-memory-utilization 0.95 --seed 42
+      - .buildkite/scripts/run_in_docker.sh python3 /workspace/tpu_inference/tests/e2e/benchmarking/decode_bench.py --model Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8 --download-dir /tmp/hf_home --tensor-parallel-size 8 --enable-expert-parallel --max-model-len 10240 --max-num-batched-tokens 8192 --max-num-seqs 512 --kv-cache-dtype fp8 --gpu-memory-utilization 0.85 --seed 42
