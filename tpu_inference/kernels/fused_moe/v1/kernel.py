@@ -479,10 +479,15 @@ def _fused_ep_moe_kernel(
     def start_a2a_scatter(bt_id, e_sem_id, local_e_id):
         bt_sem_id = bt_id % 2
 
-        # Use fori_loop to avoid compile-time unrolling of bt*top_k iterations.
-        # On 30B (bt=128, top_k=8) this is 1024 iterations — unrolling causes
-        # severe IMEM overflow and overlay thrashing (confirmed by Jevin).
-        def _scatter_body(i, send_sz):
+        # Use pl.loop with partial unrolling (unroll=8) to avoid full
+        # compile-time unrolling (IMEM overflow) while giving the Pallas
+        # compiler enough unrolled code to schedule DMAs effectively.
+        # pl.loop is Pallas-native and may handle DMA ops better than
+        # lax.fori_loop (which hurt on 480B due to loop overhead).
+        a2a_s_sends_x2_smem[e_sem_id] = 0
+
+        @pl.loop(0, bt * top_k, unroll=8)
+        def _scatter_body(i):
             bt_t_id = i // top_k
             k_id = i % top_k
             e_id = t2e_routing_x2_smem[bt_sem_id, bt_t_id, k_id]
@@ -493,7 +498,8 @@ def _fused_ep_moe_kernel(
             is_local = recv_id == my_id
             local_sz = lax.select(is_local, sz, 0)
             remote_sz = lax.select(is_local, 0, sz)
-            send_sz = send_sz + remote_sz
+            a2a_s_sends_x2_smem[e_sem_id] = (
+                a2a_s_sends_x2_smem[e_sem_id] + remote_sz)
             expert_offsets_x2_smem[bt_sem_id, 0,
                                    e_id] = (offset + local_sz + remote_sz)
             start = expert_starts_x2_smem[bt_sem_id, 0, e_id] + offset
@@ -513,10 +519,6 @@ def _fused_ep_moe_kernel(
                 device_id=get_mesh_device_id(recv_id),
                 device_id_type=pltpu.DeviceIdType.MESH,
             ).start()
-            return send_sz
-
-        send_sz = lax.fori_loop(0, bt * top_k, _scatter_body, 0)
-        a2a_s_sends_x2_smem[e_sem_id] = send_sz
 
     def wait_a2a_scatter_recv(bt_id, e_sem_id, local_e_id):
         bt_sem_id = bt_id % 2
