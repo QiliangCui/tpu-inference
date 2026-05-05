@@ -479,39 +479,42 @@ def _fused_ep_moe_kernel(
     def start_a2a_scatter(bt_id, e_sem_id, local_e_id):
         bt_sem_id = bt_id % 2
 
-        # Counting the number of remote sends from the current device.
-        send_sz = 0
-        for bt_t_id in range(bt):
-            for k_id in range(top_k):
-                e_id = t2e_routing_x2_smem[bt_sem_id, bt_t_id, k_id]
-                is_active_expert = e_id % local_num_experts == local_e_id
-                recv_id = e_id // local_num_experts
-                offset = expert_offsets_x2_smem[bt_sem_id, 0, e_id]
-                sz = lax.select(is_active_expert, 1, 0)
-                is_local = recv_id == my_id
-                local_sz = lax.select(is_local, sz, 0)
-                remote_sz = lax.select(is_local, 0, sz)
-                send_sz += remote_sz
-                expert_offsets_x2_smem[bt_sem_id, 0,
-                                       e_id] = (offset + local_sz + remote_sz)
-                start = expert_starts_x2_smem[bt_sem_id, 0, e_id] + offset
-                t_id = bt * bt_id + bt_t_id
-                # TODO(jevinjiang): compare the perf when using branches.
-                pltpu.make_async_copy(
-                    src_ref=tokens_hbm.at[pl.ds(t_id, local_sz)],
-                    dst_ref=a2a_s_x2_vmem.at[e_sem_id,
-                                             pl.ds(start, local_sz)],
-                    sem=recv_sems.at[e_sem_id],
-                ).start()
-                pltpu.make_async_remote_copy(
-                    src_ref=tokens_hbm.at[pl.ds(t_id, remote_sz)],
-                    dst_ref=a2a_s_x2_vmem.at[e_sem_id,
-                                             pl.ds(start, remote_sz)],
-                    send_sem=send_sems.at[e_sem_id],
-                    recv_sem=recv_sems.at[e_sem_id],
-                    device_id=get_mesh_device_id(recv_id),
-                    device_id_type=pltpu.DeviceIdType.MESH,
-                ).start()
+        # Use fori_loop instead of Python for-loop to avoid compile-time
+        # unrolling which causes IMEM overflow and overlay thrashing.
+        def _scatter_body(i, send_sz):
+            bt_t_id = i // top_k
+            k_id = i % top_k
+            e_id = t2e_routing_x2_smem[bt_sem_id, bt_t_id, k_id]
+            is_active_expert = e_id % local_num_experts == local_e_id
+            recv_id = e_id // local_num_experts
+            offset = expert_offsets_x2_smem[bt_sem_id, 0, e_id]
+            sz = lax.select(is_active_expert, 1, 0)
+            is_local = recv_id == my_id
+            local_sz = lax.select(is_local, sz, 0)
+            remote_sz = lax.select(is_local, 0, sz)
+            send_sz = send_sz + remote_sz
+            expert_offsets_x2_smem[bt_sem_id, 0,
+                                   e_id] = (offset + local_sz + remote_sz)
+            start = expert_starts_x2_smem[bt_sem_id, 0, e_id] + offset
+            t_id = bt * bt_id + bt_t_id
+            pltpu.make_async_copy(
+                src_ref=tokens_hbm.at[pl.ds(t_id, local_sz)],
+                dst_ref=a2a_s_x2_vmem.at[e_sem_id,
+                                         pl.ds(start, local_sz)],
+                sem=recv_sems.at[e_sem_id],
+            ).start()
+            pltpu.make_async_remote_copy(
+                src_ref=tokens_hbm.at[pl.ds(t_id, remote_sz)],
+                dst_ref=a2a_s_x2_vmem.at[e_sem_id,
+                                         pl.ds(start, remote_sz)],
+                send_sem=send_sems.at[e_sem_id],
+                recv_sem=recv_sems.at[e_sem_id],
+                device_id=get_mesh_device_id(recv_id),
+                device_id_type=pltpu.DeviceIdType.MESH,
+            ).start()
+            return send_sz
+
+        send_sz = lax.fori_loop(0, bt * top_k, _scatter_body, 0)
         a2a_s_sends_x2_smem[e_sem_id] = send_sz
 
     def wait_a2a_scatter_recv(bt_id, e_sem_id, local_e_id):
