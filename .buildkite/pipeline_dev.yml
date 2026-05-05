@@ -1,7 +1,8 @@
-# Dev pipeline — Attempt 11: pl.loop with unroll=8 on 480B
-# pl.loop is Pallas-native (vs lax.fori_loop which is generic JAX).
-# unroll=8 gives compiler 8 iterations to schedule DMAs together,
-# while keeping total code 8x smaller than full unroll (64 iterations).
+# Dev pipeline — Attempt 11b: pl.loop(unroll=False) on 480B
+# unroll=8 crashed (build #288). unroll=False matches RPA v3 pattern
+# which successfully uses pl.loop with DMAs inside nested loops.
+# This should work (same as lax.fori_loop attempt 8 but with pl.loop API
+# and SMEM accumulation instead of state carry).
 
 steps:
 

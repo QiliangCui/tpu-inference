@@ -479,14 +479,13 @@ def _fused_ep_moe_kernel(
     def start_a2a_scatter(bt_id, e_sem_id, local_e_id):
         bt_sem_id = bt_id % 2
 
-        # Use pl.loop with partial unrolling (unroll=8) to avoid full
-        # compile-time unrolling (IMEM overflow) while giving the Pallas
-        # compiler enough unrolled code to schedule DMAs effectively.
-        # pl.loop is Pallas-native and may handle DMA ops better than
-        # lax.fori_loop (which hurt on 480B due to loop overhead).
+        # Use pl.loop (same pattern as RPA v3 kernel) with unroll=False.
+        # This avoids full Python for-loop unrolling while using the
+        # established Pallas loop pattern that works with DMAs.
+        # Note: unroll=8 crashed (build #288). unroll=False matches RPA.
         a2a_s_sends_x2_smem[e_sem_id] = 0
 
-        @pl.loop(0, bt * top_k, unroll=8)
+        @pl.loop(0, bt * top_k, unroll=False)
         def _scatter_body(i):
             bt_t_id = i // top_k
             k_id = i % top_k
