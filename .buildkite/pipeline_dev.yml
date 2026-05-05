@@ -1,7 +1,6 @@
-# Dev pipeline — Attempt 9: vmem_limit_bytes=32MB (VMEM spilling fix)
-# Hypothesis: 480B scratch (~40-60MB) exceeds 32MB/TC, causing HBM spills.
-# Changing vmem_limit_bytes from 100MB to 32MB tells compiler to optimize
-# for actual VMEM size rather than allowing spills.
+# Dev pipeline — Attempt 9b: vmem_limit_bytes=48MB
+# 32MB crashed (can't compile). Try 48MB as intermediate — less spilling
+# than 100MB but enough room to compile.
 
 steps:
 
@@ -16,8 +15,8 @@ steps:
 
   # === A/B: Mixed workload ISL=8K/OSL=1K (matches build #268 baseline) ===
 
-  - label: "VMEM32 fused_EP ISL8K-OSL1K"
-    key: vmem32_fused_8k
+  - label: "VMEM48 fused_EP ISL8K-OSL1K"
+    key: vmem48_fused_8k
     depends_on: tpu7x_build_docker
     agents:
       queue: tpu_v7x_8_queue
@@ -73,8 +72,8 @@ steps:
 
   # === Also test ISL=1K/OSL=8K (long decode, where fused_EP gap is smaller) ===
 
-  - label: "VMEM32 fused_EP ISL1K-OSL8K"
-    key: vmem32_fused_1k
+  - label: "VMEM48 fused_EP ISL1K-OSL8K"
+    key: vmem48_fused_1k
     depends_on: tpu7x_build_docker
     agents:
       queue: tpu_v7x_8_queue

@@ -1631,7 +1631,7 @@ def fused_ep_moe(
         ),
         compiler_params=pltpu.CompilerParams(
             collective_id=0,
-            vmem_limit_bytes=32 * 1024 * 1024,
+            vmem_limit_bytes=48 * 1024 * 1024,
         ),
         name=scope_name,
     )
