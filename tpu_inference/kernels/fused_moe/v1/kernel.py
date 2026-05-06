@@ -14,6 +14,7 @@
 """TPU-Friendly Fused Mixture of Experts (MoE) kernel."""
 
 import functools
+import os
 
 import jax
 import jax.numpy as jnp
@@ -476,48 +477,86 @@ def _fused_ep_moe_kernel(
                        expert_sizes_x2_smem.dtype),
         )
 
+    _use_fori_loop_scatter = os.environ.get(
+        'FUSED_EP_USE_FORI_LOOP', '0') == '1'
+
     def start_a2a_scatter(bt_id, e_sem_id, local_e_id):
         bt_sem_id = bt_id % 2
 
-        # Use pl.loop (same pattern as RPA v3 kernel) with unroll=False.
-        # This avoids full Python for-loop unrolling while using the
-        # established Pallas loop pattern that works with DMAs.
-        # Note: unroll=8 crashed (build #288). unroll=False matches RPA.
-        a2a_s_sends_x2_smem[e_sem_id] = 0
+        if _use_fori_loop_scatter:
+            # fori_loop version: avoids compile-time unrolling.
+            # Better when bt*top_k is large (>512 iterations).
+            a2a_s_sends_x2_smem[e_sem_id] = 0
 
-        @pl.loop(0, bt * top_k, unroll=False)
-        def _scatter_body(i):
-            bt_t_id = i // top_k
-            k_id = i % top_k
-            e_id = t2e_routing_x2_smem[bt_sem_id, bt_t_id, k_id]
-            is_active_expert = e_id % local_num_experts == local_e_id
-            recv_id = e_id // local_num_experts
-            offset = expert_offsets_x2_smem[bt_sem_id, 0, e_id]
-            sz = lax.select(is_active_expert, 1, 0)
-            is_local = recv_id == my_id
-            local_sz = lax.select(is_local, sz, 0)
-            remote_sz = lax.select(is_local, 0, sz)
-            a2a_s_sends_x2_smem[e_sem_id] = (
-                a2a_s_sends_x2_smem[e_sem_id] + remote_sz)
-            expert_offsets_x2_smem[bt_sem_id, 0,
-                                   e_id] = (offset + local_sz + remote_sz)
-            start = expert_starts_x2_smem[bt_sem_id, 0, e_id] + offset
-            t_id = bt * bt_id + bt_t_id
-            pltpu.make_async_copy(
-                src_ref=tokens_hbm.at[pl.ds(t_id, local_sz)],
-                dst_ref=a2a_s_x2_vmem.at[e_sem_id,
-                                         pl.ds(start, local_sz)],
-                sem=recv_sems.at[e_sem_id],
-            ).start()
-            pltpu.make_async_remote_copy(
-                src_ref=tokens_hbm.at[pl.ds(t_id, remote_sz)],
-                dst_ref=a2a_s_x2_vmem.at[e_sem_id,
-                                         pl.ds(start, remote_sz)],
-                send_sem=send_sems.at[e_sem_id],
-                recv_sem=recv_sems.at[e_sem_id],
-                device_id=get_mesh_device_id(recv_id),
-                device_id_type=pltpu.DeviceIdType.MESH,
-            ).start()
+            @pl.loop(0, bt * top_k, unroll=False)
+            def _scatter_body(i):
+                bt_t_id = i // top_k
+                k_id = i % top_k
+                e_id = t2e_routing_x2_smem[bt_sem_id, bt_t_id, k_id]
+                is_active_expert = e_id % local_num_experts == local_e_id
+                recv_id = e_id // local_num_experts
+                offset = expert_offsets_x2_smem[bt_sem_id, 0, e_id]
+                sz = lax.select(is_active_expert, 1, 0)
+                is_local = recv_id == my_id
+                local_sz = lax.select(is_local, sz, 0)
+                remote_sz = lax.select(is_local, 0, sz)
+                a2a_s_sends_x2_smem[e_sem_id] = (
+                    a2a_s_sends_x2_smem[e_sem_id] + remote_sz)
+                expert_offsets_x2_smem[bt_sem_id, 0,
+                                       e_id] = (offset + local_sz + remote_sz)
+                start = expert_starts_x2_smem[bt_sem_id, 0, e_id] + offset
+                t_id = bt * bt_id + bt_t_id
+                pltpu.make_async_copy(
+                    src_ref=tokens_hbm.at[pl.ds(t_id, local_sz)],
+                    dst_ref=a2a_s_x2_vmem.at[e_sem_id,
+                                             pl.ds(start, local_sz)],
+                    sem=recv_sems.at[e_sem_id],
+                ).start()
+                pltpu.make_async_remote_copy(
+                    src_ref=tokens_hbm.at[pl.ds(t_id, remote_sz)],
+                    dst_ref=a2a_s_x2_vmem.at[e_sem_id,
+                                             pl.ds(start, remote_sz)],
+                    send_sem=send_sems.at[e_sem_id],
+                    recv_sem=recv_sems.at[e_sem_id],
+                    device_id=get_mesh_device_id(recv_id),
+                    device_id_type=pltpu.DeviceIdType.MESH,
+                ).start()
+        else:
+            # Original: Python for-loop, fully unrolled at compile time.
+            send_sz = 0
+            for bt_t_id in range(bt):
+                for k_id in range(top_k):
+                    e_id = t2e_routing_x2_smem[bt_sem_id, bt_t_id, k_id]
+                    is_active_expert = e_id % local_num_experts == local_e_id
+                    recv_id = e_id // local_num_experts
+                    offset = expert_offsets_x2_smem[bt_sem_id, 0, e_id]
+                    sz = lax.select(is_active_expert, 1, 0)
+                    is_local = recv_id == my_id
+                    local_sz = lax.select(is_local, sz, 0)
+                    remote_sz = lax.select(is_local, 0, sz)
+                    send_sz += remote_sz
+                    expert_offsets_x2_smem[bt_sem_id, 0,
+                                           e_id] = (offset + local_sz +
+                                                    remote_sz)
+                    start = (expert_starts_x2_smem[bt_sem_id, 0, e_id] +
+                             offset)
+                    t_id = bt * bt_id + bt_t_id
+                    pltpu.make_async_copy(
+                        src_ref=tokens_hbm.at[pl.ds(t_id, local_sz)],
+                        dst_ref=a2a_s_x2_vmem.at[e_sem_id,
+                                                 pl.ds(start, local_sz)],
+                        sem=recv_sems.at[e_sem_id],
+                    ).start()
+                    pltpu.make_async_remote_copy(
+                        src_ref=tokens_hbm.at[pl.ds(t_id, remote_sz)],
+                        dst_ref=a2a_s_x2_vmem.at[e_sem_id,
+                                                 pl.ds(start, remote_sz)],
+                        send_sem=send_sems.at[e_sem_id],
+                        recv_sem=recv_sems.at[e_sem_id],
+                        device_id=get_mesh_device_id(recv_id),
+                        device_id_type=pltpu.DeviceIdType.MESH,
+                    ).start()
+            a2a_s_sends_x2_smem[e_sem_id] = send_sz
 
     def wait_a2a_scatter_recv(bt_id, e_sem_id, local_e_id):
         bt_sem_id = bt_id % 2
@@ -1349,6 +1388,14 @@ def fused_ep_moe(
         bt = local_num_tokens
         btc = bt
     bt = min(local_num_tokens, bt)
+
+    # Env var override for bt (for experiments)
+    bt_override = int(os.environ.get('FUSED_EP_BT_OVERRIDE', '0'))
+    if bt_override > 0 and local_num_tokens >= bt_override:
+        if local_num_tokens % bt_override == 0:
+            bt = bt_override
+            btc = min(bt, btc)
+
     # The worst case is that all devices send bt to one device.
     btc = min(bt, btc)
     assert bt % btc == 0

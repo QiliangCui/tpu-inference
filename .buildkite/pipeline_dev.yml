@@ -1,7 +1,7 @@
-# Dev pipeline — Attempt 12: fori_loop scatter on 480B PREFILL
-# bt=64 during prefill (tuned) → 512 scatter iterations (vs 64 in decode)
-# This is where IMEM overlay should matter.
-# Baseline: build #274 fused_EP 0.94 req/s (8K), 5.55 req/s (1K)
+# Dev pipeline — Attempt 13: bt=128/256 × unrolled/fori_loop on 480B prefill
+# Tests whether fori_loop helps at larger bt (more scatter iterations).
+# bt=128: 1024 iterations. bt=256: 2048 iterations.
+# Env vars: FUSED_EP_BT_OVERRIDE, FUSED_EP_USE_FORI_LOOP
 
 steps:
 
@@ -14,10 +14,9 @@ steps:
     commands:
       - bash -c 'source .buildkite/scripts/setup_docker_env.sh && setup_environment "vllm-tpu" "false" "true"'
 
-  # === Prefill ISL=8K, OSL=1 (same config as build #274) ===
-
-  - label: "PREFILL-8K fori_loop fused_EP"
-    key: prefill_8k_fori_fused
+  # === bt=128, unrolled (1024 iterations fully unrolled) ===
+  - label: "bt128 UNROLLED fused_EP prefill-8K"
+    key: bt128_unrolled
     depends_on: tpu7x_build_docker
     agents:
       queue: tpu_v7x_8_queue
@@ -34,6 +33,8 @@ steps:
       NUM_PROMPTS: "320"
       ENABLE_EXPERT_PARALLEL: "1"
       USE_MOE_EP_KERNEL: "1"
+      FUSED_EP_BT_OVERRIDE: "128"
+      FUSED_EP_USE_FORI_LOOP: "0"
       KV_CACHE_DTYPE: "fp8"
       GPU_MEMORY_UTILIZATION: "0.95"
       MAX_CONCURRENCY: "64"
@@ -43,8 +44,9 @@ steps:
     commands:
       - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh
 
-  - label: "PREFILL-8K GMM_EP (baseline)"
-    key: prefill_8k_gmm
+  # === bt=128, fori_loop (1024 iterations, dynamic loop) ===
+  - label: "bt128 FORI fused_EP prefill-8K"
+    key: bt128_fori
     depends_on: tpu7x_build_docker
     agents:
       queue: tpu_v7x_8_queue
@@ -60,6 +62,9 @@ steps:
       OUTPUT_LEN: "1"
       NUM_PROMPTS: "320"
       ENABLE_EXPERT_PARALLEL: "1"
+      USE_MOE_EP_KERNEL: "1"
+      FUSED_EP_BT_OVERRIDE: "128"
+      FUSED_EP_USE_FORI_LOOP: "1"
       KV_CACHE_DTYPE: "fp8"
       GPU_MEMORY_UTILIZATION: "0.95"
       MAX_CONCURRENCY: "64"
@@ -69,10 +74,9 @@ steps:
     commands:
       - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh
 
-  # === Prefill ISL=1K, OSL=1 ===
-
-  - label: "PREFILL-1K fori_loop fused_EP"
-    key: prefill_1k_fori_fused
+  # === bt=256, unrolled (2048 iterations fully unrolled) ===
+  - label: "bt256 UNROLLED fused_EP prefill-8K"
+    key: bt256_unrolled
     depends_on: tpu7x_build_docker
     agents:
       queue: tpu_v7x_8_queue
@@ -84,11 +88,13 @@ steps:
       MAX_NUM_BATCHED_TOKENS: "8192"
       MAX_NUM_SEQS: "512"
       MAX_MODEL_LEN: "10240"
-      INPUT_LEN: "1024"
+      INPUT_LEN: "8192"
       OUTPUT_LEN: "1"
       NUM_PROMPTS: "320"
       ENABLE_EXPERT_PARALLEL: "1"
       USE_MOE_EP_KERNEL: "1"
+      FUSED_EP_BT_OVERRIDE: "256"
+      FUSED_EP_USE_FORI_LOOP: "0"
       KV_CACHE_DTYPE: "fp8"
       GPU_MEMORY_UTILIZATION: "0.95"
       MAX_CONCURRENCY: "64"
@@ -98,8 +104,9 @@ steps:
     commands:
       - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh
 
-  - label: "PREFILL-1K GMM_EP (baseline)"
-    key: prefill_1k_gmm
+  # === bt=256, fori_loop (2048 iterations, dynamic loop) ===
+  - label: "bt256 FORI fused_EP prefill-8K"
+    key: bt256_fori
     depends_on: tpu7x_build_docker
     agents:
       queue: tpu_v7x_8_queue
@@ -111,7 +118,37 @@ steps:
       MAX_NUM_BATCHED_TOKENS: "8192"
       MAX_NUM_SEQS: "512"
       MAX_MODEL_LEN: "10240"
-      INPUT_LEN: "1024"
+      INPUT_LEN: "8192"
+      OUTPUT_LEN: "1"
+      NUM_PROMPTS: "320"
+      ENABLE_EXPERT_PARALLEL: "1"
+      USE_MOE_EP_KERNEL: "1"
+      FUSED_EP_BT_OVERRIDE: "256"
+      FUSED_EP_USE_FORI_LOOP: "1"
+      KV_CACHE_DTYPE: "fp8"
+      GPU_MEMORY_UTILIZATION: "0.95"
+      MAX_CONCURRENCY: "64"
+      RANDOM_RANGE_RATIO: "0.8"
+      REQUEST_RATE: "inf"
+      EXTRA_SERVER_ARGS: "--seed=42 --no-enable-prefix-caching --async-scheduling"
+    commands:
+      - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh
+
+  # === GMM_EP baseline (for reference) ===
+  - label: "GMM_EP prefill-8K (baseline)"
+    key: gmm_baseline
+    depends_on: tpu7x_build_docker
+    agents:
+      queue: tpu_v7x_8_queue
+    env:
+      USE_PREBUILT_IMAGE: "1"
+      TPU_VERSION: "tpu7x"
+      TEST_MODEL: "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8"
+      TENSOR_PARALLEL_SIZE: "8"
+      MAX_NUM_BATCHED_TOKENS: "8192"
+      MAX_NUM_SEQS: "512"
+      MAX_MODEL_LEN: "10240"
+      INPUT_LEN: "8192"
       OUTPUT_LEN: "1"
       NUM_PROMPTS: "320"
       ENABLE_EXPERT_PARALLEL: "1"
