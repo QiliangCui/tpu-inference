@@ -1,6 +1,6 @@
-# Dev pipeline — Attempt 14: Confirm bt values + A/B with logging
-# ISL=8K/OSL=1K, 320 prompts, concurrency=64
-# Goals: 1) confirm actual bt during prefill vs decode, 2) compare unrolled vs fori
+# Dev pipeline — Step 2b: Mosaic IR dump experiment
+# Try --xla_mosaic_dump_to to see compiled Mosaic IR for fused_ep_moe
+# Small test (few prompts) — goal is dump output, not perf numbers
 
 steps:
 
@@ -13,10 +13,9 @@ steps:
     commands:
       - bash -c 'source .buildkite/scripts/setup_docker_env.sh && setup_environment "vllm-tpu" "false" "true"'
 
-  # === WITHOUT profiling (clean performance numbers) ===
-
-  - label: "GMM_EP 8K/1K (no profile)"
-    key: gmm_noprof
+  # Attempt 2b-1: --xla_mosaic_dump_to only
+  - label: "Mosaic dump: xla_mosaic_dump_to"
+    key: mosaic_dump_1
     depends_on: tpu7x_build_docker
     agents:
       queue: tpu_v7x_8_queue
@@ -28,131 +27,41 @@ steps:
       MAX_NUM_BATCHED_TOKENS: "8192"
       MAX_NUM_SEQS: "512"
       MAX_MODEL_LEN: "10240"
-      INPUT_LEN: "8192"
-      OUTPUT_LEN: "1024"
-      NUM_PROMPTS: "320"
-      ENABLE_EXPERT_PARALLEL: "1"
-      KV_CACHE_DTYPE: "fp8"
-      GPU_MEMORY_UTILIZATION: "0.95"
-      MAX_CONCURRENCY: "64"
-      RANDOM_RANGE_RATIO: "0.8"
-      REQUEST_RATE: "inf"
-      EXTRA_SERVER_ARGS: "--seed=42 --no-enable-prefix-caching --async-scheduling"
-    commands:
-      - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh
-
-  - label: "fused_EP UNROLLED 8K/1K (no profile)"
-    key: fused_unrolled_noprof
-    depends_on: tpu7x_build_docker
-    agents:
-      queue: tpu_v7x_8_queue
-    env:
-      USE_PREBUILT_IMAGE: "1"
-      TPU_VERSION: "tpu7x"
-      TEST_MODEL: "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8"
-      TENSOR_PARALLEL_SIZE: "8"
-      MAX_NUM_BATCHED_TOKENS: "8192"
-      MAX_NUM_SEQS: "512"
-      MAX_MODEL_LEN: "10240"
-      INPUT_LEN: "8192"
-      OUTPUT_LEN: "1024"
-      NUM_PROMPTS: "320"
+      INPUT_LEN: "1024"
+      OUTPUT_LEN: "1"
+      NUM_PROMPTS: "10"
       ENABLE_EXPERT_PARALLEL: "1"
       USE_MOE_EP_KERNEL: "1"
-      FUSED_EP_USE_FORI_LOOP: "0"
       KV_CACHE_DTYPE: "fp8"
       GPU_MEMORY_UTILIZATION: "0.95"
-      MAX_CONCURRENCY: "64"
-      RANDOM_RANGE_RATIO: "0.8"
+      MAX_CONCURRENCY: "10"
       REQUEST_RATE: "inf"
+      XLA_FLAGS: "--xla_mosaic_dump_to=/tmp/mosaic_dump"
       EXTRA_SERVER_ARGS: "--seed=42 --no-enable-prefix-caching --async-scheduling"
     commands:
-      - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh
-
-  - label: "fused_EP FORI 8K/1K (no profile)"
-    key: fused_fori_noprof
-    depends_on: tpu7x_build_docker
-    agents:
-      queue: tpu_v7x_8_queue
-    env:
-      USE_PREBUILT_IMAGE: "1"
-      TPU_VERSION: "tpu7x"
-      TEST_MODEL: "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8"
-      TENSOR_PARALLEL_SIZE: "8"
-      MAX_NUM_BATCHED_TOKENS: "8192"
-      MAX_NUM_SEQS: "512"
-      MAX_MODEL_LEN: "10240"
-      INPUT_LEN: "8192"
-      OUTPUT_LEN: "1024"
-      NUM_PROMPTS: "320"
-      ENABLE_EXPERT_PARALLEL: "1"
-      USE_MOE_EP_KERNEL: "1"
-      FUSED_EP_USE_FORI_LOOP: "1"
-      KV_CACHE_DTYPE: "fp8"
-      GPU_MEMORY_UTILIZATION: "0.95"
-      MAX_CONCURRENCY: "64"
-      RANDOM_RANGE_RATIO: "0.8"
-      REQUEST_RATE: "inf"
-      EXTRA_SERVER_ARGS: "--seed=42 --no-enable-prefix-caching --async-scheduling"
-    commands:
-      - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh
-
-  # === WITH profiling (device traces to see bt in kernel names) ===
-
-  - label: "fused_EP UNROLLED 8K/1K (PROFILE)"
-    key: fused_unrolled_prof
-    depends_on: tpu7x_build_docker
-    agents:
-      queue: tpu_v7x_8_queue
-    env:
-      USE_PREBUILT_IMAGE: "1"
-      TPU_VERSION: "tpu7x"
-      TEST_MODEL: "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8"
-      TENSOR_PARALLEL_SIZE: "8"
-      MAX_NUM_BATCHED_TOKENS: "8192"
-      MAX_NUM_SEQS: "512"
-      MAX_MODEL_LEN: "10240"
-      INPUT_LEN: "8192"
-      OUTPUT_LEN: "1024"
-      NUM_PROMPTS: "200"
-      ENABLE_EXPERT_PARALLEL: "1"
-      USE_MOE_EP_KERNEL: "1"
-      FUSED_EP_USE_FORI_LOOP: "0"
-      KV_CACHE_DTYPE: "fp8"
-      GPU_MEMORY_UTILIZATION: "0.95"
-      PHASED_PROFILING_DIR: "1"
-      MAX_CONCURRENCY: "64"
-      RANDOM_RANGE_RATIO: "0.8"
-      REQUEST_RATE: "inf"
-      EXTRA_SERVER_ARGS: "--seed=42 --no-enable-prefix-caching --async-scheduling"
-    commands:
-      - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh
-
-  - label: "fused_EP FORI 8K/1K (PROFILE)"
-    key: fused_fori_prof
-    depends_on: tpu7x_build_docker
-    agents:
-      queue: tpu_v7x_8_queue
-    env:
-      USE_PREBUILT_IMAGE: "1"
-      TPU_VERSION: "tpu7x"
-      TEST_MODEL: "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8"
-      TENSOR_PARALLEL_SIZE: "8"
-      MAX_NUM_BATCHED_TOKENS: "8192"
-      MAX_NUM_SEQS: "512"
-      MAX_MODEL_LEN: "10240"
-      INPUT_LEN: "8192"
-      OUTPUT_LEN: "1024"
-      NUM_PROMPTS: "200"
-      ENABLE_EXPERT_PARALLEL: "1"
-      USE_MOE_EP_KERNEL: "1"
-      FUSED_EP_USE_FORI_LOOP: "1"
-      KV_CACHE_DTYPE: "fp8"
-      GPU_MEMORY_UTILIZATION: "0.95"
-      PHASED_PROFILING_DIR: "1"
-      MAX_CONCURRENCY: "64"
-      RANDOM_RANGE_RATIO: "0.8"
-      REQUEST_RATE: "inf"
-      EXTRA_SERVER_ARGS: "--seed=42 --no-enable-prefix-caching --async-scheduling"
-    commands:
-      - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh
+      - .buildkite/scripts/run_in_docker.sh bash -c '
+          bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh;
+          echo "=== Mosaic dump files ===";
+          find /tmp/mosaic_dump -type f 2>/dev/null | head -50;
+          echo "=== Dump file sizes ===";
+          du -sh /tmp/mosaic_dump 2>/dev/null;
+          ls -la /tmp/mosaic_dump/ 2>/dev/null | head -30;
+          echo "=== First fused-moe file (first 200 lines) ===";
+          find /tmp/mosaic_dump -name "*fused-moe*" -type f 2>/dev/null | head -1 | xargs head -200 2>/dev/null;
+          echo "=== Upload dump to GCS ===";
+          python3 -c "
+from google.cloud import storage
+import os, glob
+client = storage.Client()
+bucket = client.bucket(\"vllm-cb-storage2\")
+dump_dir = \"/tmp/mosaic_dump\"
+if os.path.exists(dump_dir):
+    files = glob.glob(dump_dir + \"/*fused-moe*\")[:5]
+    for f in files:
+        blob = bucket.blob(f\"cuiq/mosaic_dump/{os.path.basename(f)}\")
+        blob.upload_from_filename(f)
+        print(f\"Uploaded {os.path.basename(f)} ({os.path.getsize(f)/1024:.0f} KB)\")
+else:
+    print(\"No dump directory found\")
+" 2>&1 || echo "GCS upload failed"
+        '
