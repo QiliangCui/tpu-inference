@@ -1525,7 +1525,8 @@ def fused_ep_moe(
     hbm_block_spec = pl.BlockSpec(memory_space=pltpu.MemorySpace.HBM)
     renorm_str = "-renorm_k" if renormalize_topk_logits else ""
     scope_name = f"fused-moe-k_{top_k}{renorm_str}-bt_{bt}_{btc}-bf_{bf}_{bfc}-bd1_{bd1}_{bd1c}-bd2_{bd2}_{bd2c}"
-    print(f"[fused_ep_moe] COMPILING: {scope_name} | num_tokens={num_tokens} local_num_tokens={local_num_tokens} bt={bt} btc={btc} scatter_iters={bt*top_k} fori_loop={_use_fori_loop_scatter}")
+    _use_fori = os.environ.get('FUSED_EP_USE_FORI_LOOP', '0')
+    print(f"[fused_ep_moe] COMPILING: {scope_name} | num_tokens={num_tokens} local_num_tokens={local_num_tokens} bt={bt} btc={btc} scatter_iters={bt*top_k} fori_loop={_use_fori}")
     fused_moe = pl.pallas_call(
         functools.partial(
             _fused_ep_moe_kernel,
