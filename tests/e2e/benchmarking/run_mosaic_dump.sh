@@ -57,74 +57,63 @@ if [ "$XLA_COUNT" -gt 0 ]; then
     fi
 fi
 
-# === Extract fused_moe custom-call from smallest HLO file ===
+# === Extract fused_moe custom-call from HLO files using grep (memory-efficient) ===
 echo ""
-echo "=== Extracting fused_moe custom-call body ==="
+echo "=== Extracting fused_moe references ==="
 
-python3 << 'PYEOF'
-import os, glob, re
+EXTRACT="/tmp/fused_moe_hlo_extract.txt"
+> "$EXTRACT"
 
-dump_dir = '/tmp/xla_dump'
-out_file = '/tmp/fused_moe_hlo_extract.txt'
+# Find the smallest before_optimizations file (least processed, easier to read)
+SMALLEST=$(find "$XLA_DUMP_DIR" -name "*before_optimizations*" -type f -printf '%s %p\n' 2>/dev/null | sort -n | head -1 | awk '{print $2}')
+if [ -z "$SMALLEST" ]; then
+    SMALLEST=$(find "$XLA_DUMP_DIR" -name "*.txt" -type f -printf '%s %p\n' 2>/dev/null | sort -n | head -1 | awk '{print $2}')
+fi
 
-# Find the smallest file that contains fused_moe (before_optimizations is usually smaller)
-candidates = []
-for f in sorted(glob.glob(dump_dir + '/*before_optimizations*')):
-    if os.path.isfile(f):
-        candidates.append((os.path.getsize(f), f))
+if [ -n "$SMALLEST" ]; then
+    echo "Using: $(basename $SMALLEST) ($(du -h "$SMALLEST" | cut -f1))"
+    echo ""
 
-if not candidates:
-    for f in sorted(glob.glob(dump_dir + '/*.txt')):
-        if os.path.isfile(f):
-            candidates.append((os.path.getsize(f), f))
+    # Count fused_moe references
+    FUSED_COUNT=$(grep -c "fused.moe\|fused_moe\|fused-moe" "$SMALLEST" 2>/dev/null || echo 0)
+    echo "fused_moe references: $FUSED_COUNT"
 
-candidates.sort()
-print(f"Found {len(candidates)} candidate files")
+    # Extract lines with context
+    echo "=== FILE: $(basename $SMALLEST) ===" >> "$EXTRACT"
+    echo "fused_moe references: $FUSED_COUNT" >> "$EXTRACT"
+    echo "" >> "$EXTRACT"
+    grep -n -B 3 -A 15 "fused.moe\|fused_moe\|fused-moe" "$SMALLEST" 2>/dev/null | head -500 >> "$EXTRACT"
 
-with open(out_file, 'w') as out:
-    for size, filepath in candidates[:3]:  # Check smallest 3
-        print(f"Checking {os.path.basename(filepath)} ({size/1024/1024:.0f} MB)...")
-        with open(filepath) as f:
-            content = f.read()
+    echo "" >> "$EXTRACT"
+    echo "=== custom-call targets ===" >> "$EXTRACT"
+    grep -o 'custom_call_target="[^"]*"' "$SMALLEST" 2>/dev/null | sort -u >> "$EXTRACT"
 
-        # Find all custom-call ops that mention fused_moe
-        # HLO custom-calls look like: %custom-call = ... custom-call(...), custom_call_target="mosaic_..."
-        # The kernel name appears in the backend_config
-        fused_sections = []
-        lines = content.split('\n')
-        for i, line in enumerate(lines):
-            if 'fused-moe' in line or 'fused_moe' in line:
-                start = max(0, i - 5)
-                end = min(len(lines), i + 20)
-                section = '\n'.join(lines[start:end])
-                fused_sections.append(f"--- Line {i} in {os.path.basename(filepath)} ---\n{section}\n")
+    echo "" >> "$EXTRACT"
+    echo "=== backend_config with fused ===" >> "$EXTRACT"
+    grep -B 1 -A 5 'backend_config.*fused\|fused.*backend_config' "$SMALLEST" 2>/dev/null | head -200 >> "$EXTRACT"
 
-        if fused_sections:
-            out.write(f"\n{'='*60}\n")
-            out.write(f"FILE: {os.path.basename(filepath)} ({size/1024/1024:.0f} MB)\n")
-            out.write(f"Found {len(fused_sections)} fused_moe references\n")
-            out.write(f"{'='*60}\n\n")
-            # Write first 5 sections
-            for s in fused_sections[:5]:
-                out.write(s + '\n')
-            print(f"  Found {len(fused_sections)} fused_moe references")
-        else:
-            print(f"  No fused_moe found")
+    echo ""
+    echo "Extract size: $(du -h "$EXTRACT" | cut -f1)"
+    echo ""
+    echo "=== Extract content (first 3000 chars) ==="
+    head -c 3000 "$EXTRACT"
+    echo ""
+    echo "=== (truncated) ==="
+else
+    echo "No HLO dump files found"
+fi
 
-print(f"\nExtracted to {out_file} ({os.path.getsize(out_file)/1024:.0f} KB)")
-
-# Upload the extract to GCS
-try:
-    from google.cloud import storage
+# Upload extract to GCS
+python3 -c "
+from google.cloud import storage
+import os
+f = '/tmp/fused_moe_hlo_extract.txt'
+if os.path.exists(f) and os.path.getsize(f) > 0:
     client = storage.Client()
     bucket = client.bucket('vllm-cb-storage2')
     blob = bucket.blob('cuiq/mosaic_dump/fused_moe_hlo_extract.txt')
-    blob.upload_from_filename(out_file)
-    print(f"Uploaded to GCS: cuiq/mosaic_dump/fused_moe_hlo_extract.txt")
-except Exception as e:
-    print(f"GCS upload failed: {e}")
-
-# Also print the extract to stdout (for BK logs)
-with open(out_file) as f:
-    print(f.read()[:5000])
-PYEOF
+    blob.upload_from_filename(f)
+    print(f'Uploaded ({os.path.getsize(f)/1024:.0f} KB)')
+else:
+    print('Nothing to upload')
+" 2>&1 || echo "GCS upload failed"
