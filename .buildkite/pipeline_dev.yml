@@ -1,6 +1,5 @@
-# Dev pipeline — Step 2b: Mosaic IR dump experiment
+# Dev pipeline — Step 2b-1: Mosaic IR dump experiment
 # Try --xla_mosaic_dump_to to see compiled Mosaic IR for fused_ep_moe
-# Small test (few prompts) — goal is dump output, not perf numbers
 
 steps:
 
@@ -13,9 +12,8 @@ steps:
     commands:
       - bash -c 'source .buildkite/scripts/setup_docker_env.sh && setup_environment "vllm-tpu" "false" "true"'
 
-  # Attempt 2b-1: --xla_mosaic_dump_to only
-  - label: "Mosaic dump: xla_mosaic_dump_to"
-    key: mosaic_dump_1
+  - label: "Mosaic IR dump (fused_EP)"
+    key: mosaic_dump
     depends_on: tpu7x_build_docker
     agents:
       queue: tpu_v7x_8_queue
@@ -36,32 +34,6 @@ steps:
       GPU_MEMORY_UTILIZATION: "0.95"
       MAX_CONCURRENCY: "10"
       REQUEST_RATE: "inf"
-      XLA_FLAGS: "--xla_mosaic_dump_to=/tmp/mosaic_dump"
       EXTRA_SERVER_ARGS: "--seed=42 --no-enable-prefix-caching --async-scheduling"
     commands:
-      - .buildkite/scripts/run_in_docker.sh bash -c '
-          bash /workspace/tpu_inference/tests/e2e/benchmarking/sweep_profile.sh;
-          echo "=== Mosaic dump files ===";
-          find /tmp/mosaic_dump -type f 2>/dev/null | head -50;
-          echo "=== Dump file sizes ===";
-          du -sh /tmp/mosaic_dump 2>/dev/null;
-          ls -la /tmp/mosaic_dump/ 2>/dev/null | head -30;
-          echo "=== First fused-moe file (first 200 lines) ===";
-          find /tmp/mosaic_dump -name "*fused-moe*" -type f 2>/dev/null | head -1 | xargs head -200 2>/dev/null;
-          echo "=== Upload dump to GCS ===";
-          python3 -c "
-from google.cloud import storage
-import os, glob
-client = storage.Client()
-bucket = client.bucket(\"vllm-cb-storage2\")
-dump_dir = \"/tmp/mosaic_dump\"
-if os.path.exists(dump_dir):
-    files = glob.glob(dump_dir + \"/*fused-moe*\")[:5]
-    for f in files:
-        blob = bucket.blob(f\"cuiq/mosaic_dump/{os.path.basename(f)}\")
-        blob.upload_from_filename(f)
-        print(f\"Uploaded {os.path.basename(f)} ({os.path.getsize(f)/1024:.0f} KB)\")
-else:
-    print(\"No dump directory found\")
-" 2>&1 || echo "GCS upload failed"
-        '
+      - .buildkite/scripts/run_in_docker.sh bash /workspace/tpu_inference/tests/e2e/benchmarking/run_mosaic_dump.sh
