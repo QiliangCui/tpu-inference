@@ -63,10 +63,15 @@ echo ""
 echo "=== Extracting fused_moe from HLO ==="
 > "$EXTRACT"
 
-# Use the smallest before_optimizations file
-SMALLEST=$(find "$DUMP_DIR" -name "*before_optimizations*" -type f -printf '%s %p\n' 2>/dev/null | sort -n | head -1 | awk '{print $2}')
+# Use a jit_step_fun file (contains fused_moe). Pick before_optimizations (less processed).
+SMALLEST=$(find "$DUMP_DIR" -name "*jit_step_fun*before_optimizations.txt" -type f -printf '%s %p\n' 2>/dev/null | sort -n | head -1 | awk '{print $2}')
 if [ -z "$SMALLEST" ]; then
-    SMALLEST=$(find "$DUMP_DIR" -type f -name "*.txt" -printf '%s %p\n' 2>/dev/null | sort -n | head -1 | awk '{print $2}')
+    # Fallback: any jit_step_fun file
+    SMALLEST=$(find "$DUMP_DIR" -name "*jit_step_fun*" -type f -printf '%s %p\n' 2>/dev/null | sort -n | head -1 | awk '{print $2}')
+fi
+if [ -z "$SMALLEST" ]; then
+    # Fallback: largest file (likely the main module)
+    SMALLEST=$(find "$DUMP_DIR" -type f -name "*.txt" -printf '%s %p\n' 2>/dev/null | sort -rn | head -1 | awk '{print $2}')
 fi
 
 if [ -n "$SMALLEST" ]; then
