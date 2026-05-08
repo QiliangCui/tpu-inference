@@ -57,33 +57,74 @@ if [ "$XLA_COUNT" -gt 0 ]; then
     fi
 fi
 
-# === Upload to GCS ===
+# === Extract fused_moe custom-call from smallest HLO file ===
 echo ""
-echo "=== Uploading to GCS ==="
+echo "=== Extracting fused_moe custom-call body ==="
+
 python3 << 'PYEOF'
-from google.cloud import storage
-import os, glob
+import os, glob, re
 
-client = storage.Client()
-bucket = client.bucket('vllm-cb-storage2')
+dump_dir = '/tmp/xla_dump'
+out_file = '/tmp/fused_moe_hlo_extract.txt'
 
-# Upload mosaic dump files
-for dump_dir, prefix in [('/tmp/mosaic_dump', 'mosaic_dump'), ('/tmp/xla_dump', 'xla_dump')]:
-    files = sorted(glob.glob(dump_dir + '/**', recursive=True))
-    files = [f for f in files if os.path.isfile(f)]
-    # Filter for fused-moe related files, or take first 10
-    fused_files = [f for f in files if 'fused' in f.lower() or 'moe' in f.lower()]
-    upload_files = fused_files[:10] if fused_files else files[:10]
+# Find the smallest file that contains fused_moe (before_optimizations is usually smaller)
+candidates = []
+for f in sorted(glob.glob(dump_dir + '/*before_optimizations*')):
+    if os.path.isfile(f):
+        candidates.append((os.path.getsize(f), f))
 
-    for f in upload_files:
-        rel_path = os.path.relpath(f, dump_dir)
-        blob_path = f'cuiq/{prefix}/{rel_path}'
-        blob = bucket.blob(blob_path)
-        blob.upload_from_filename(f)
-        print(f'  Uploaded {rel_path} ({os.path.getsize(f)/1024:.0f} KB)')
+if not candidates:
+    for f in sorted(glob.glob(dump_dir + '/*.txt')):
+        if os.path.isfile(f):
+            candidates.append((os.path.getsize(f), f))
 
-    if not upload_files:
-        print(f'  No files to upload from {dump_dir}')
+candidates.sort()
+print(f"Found {len(candidates)} candidate files")
 
-print('Done.')
+with open(out_file, 'w') as out:
+    for size, filepath in candidates[:3]:  # Check smallest 3
+        print(f"Checking {os.path.basename(filepath)} ({size/1024/1024:.0f} MB)...")
+        with open(filepath) as f:
+            content = f.read()
+
+        # Find all custom-call ops that mention fused_moe
+        # HLO custom-calls look like: %custom-call = ... custom-call(...), custom_call_target="mosaic_..."
+        # The kernel name appears in the backend_config
+        fused_sections = []
+        lines = content.split('\n')
+        for i, line in enumerate(lines):
+            if 'fused-moe' in line or 'fused_moe' in line:
+                start = max(0, i - 5)
+                end = min(len(lines), i + 20)
+                section = '\n'.join(lines[start:end])
+                fused_sections.append(f"--- Line {i} in {os.path.basename(filepath)} ---\n{section}\n")
+
+        if fused_sections:
+            out.write(f"\n{'='*60}\n")
+            out.write(f"FILE: {os.path.basename(filepath)} ({size/1024/1024:.0f} MB)\n")
+            out.write(f"Found {len(fused_sections)} fused_moe references\n")
+            out.write(f"{'='*60}\n\n")
+            # Write first 5 sections
+            for s in fused_sections[:5]:
+                out.write(s + '\n')
+            print(f"  Found {len(fused_sections)} fused_moe references")
+        else:
+            print(f"  No fused_moe found")
+
+print(f"\nExtracted to {out_file} ({os.path.getsize(out_file)/1024:.0f} KB)")
+
+# Upload the extract to GCS
+try:
+    from google.cloud import storage
+    client = storage.Client()
+    bucket = client.bucket('vllm-cb-storage2')
+    blob = bucket.blob('cuiq/mosaic_dump/fused_moe_hlo_extract.txt')
+    blob.upload_from_filename(out_file)
+    print(f"Uploaded to GCS: cuiq/mosaic_dump/fused_moe_hlo_extract.txt")
+except Exception as e:
+    print(f"GCS upload failed: {e}")
+
+# Also print the extract to stdout (for BK logs)
+with open(out_file) as f:
+    print(f.read()[:5000])
 PYEOF
