@@ -8,7 +8,10 @@ XLA_DUMP_DIR="/tmp/xla_dump"
 mkdir -p "$DUMP_DIR" "$XLA_DUMP_DIR"
 
 # Try both mosaic dump and standard xla dump
-export XLA_FLAGS="${XLA_FLAGS:-} --xla_mosaic_dump_to=$DUMP_DIR --xla_dump_to=$XLA_DUMP_DIR --xla_dump_hlo_as_text"
+# Note: --xla_mosaic_dump_to produced no output (build #345).
+# Both flags together caused JAX to find 0 devices (build #347).
+# Try only --xla_dump_to (standard XLA, more likely to work).
+export XLA_FLAGS="${XLA_FLAGS:-} --xla_dump_to=$XLA_DUMP_DIR --xla_dump_hlo_as_text --xla_dump_hlo_as_long_text"
 echo "=== XLA_FLAGS: $XLA_FLAGS ==="
 
 # Run the normal benchmark
