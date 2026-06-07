@@ -25,15 +25,18 @@ steps:
     commands:
       - bash -c 'source .buildkite/scripts/setup_docker_env.sh && setup_environment "vllm-tpu" "false" "true"'
 
-  - label: "tpu6e Unit tests for Qwen/Qwen3.6-35B-A3B"
-    key: tpu6e_Qwen_Qwen3_6-35B-A3B_UnitTest
+  - label: "tpu6e Accuracy for Qwen/Qwen3.6-35B-A3B"
+    key: tpu6e_Qwen_Qwen3_6-35B-A3B_Accuracy
     depends_on: tpu6e_build_docker
     env:
       USE_PREBUILT_IMAGE: "1"
       TPU_VERSION: "tpu6e"
+      TEST_MODEL: "Qwen/Qwen3.6-35B-A3B"
+      TENSOR_PARALLEL_SIZE: "8"
+      MINIMUM_ACCURACY_THRESHOLD: "0.41"
+      MODEL_IMPL_TYPE: "vllm"
     agents:
       queue: tpu_v6e_8_queue
     commands:
       - |
-        .buildkite/scripts/run_in_docker.sh \
-          bash -c 'USE_BATCHED_RPA_KERNEL=1 SKIP_JAX_PRECOMPILE=1 VLLM_XLA_CHECK_RECOMPILATION=0 python /workspace/tpu_inference/examples/offline_inference.py --model Qwen/Qwen3.6-35B-A3B --tensor-parallel-size 8 --max-num-batched-tokens 4096 --max-model-len 4096'
+        .buildkite/scripts/run_in_docker.sh bash -c 'USE_BATCHED_RPA_KERNEL=1 bash /workspace/tpu_inference/tests/e2e/benchmarking/test_accuracy.sh'
