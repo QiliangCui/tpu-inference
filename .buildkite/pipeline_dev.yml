@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Dev pipeline: bringup UnitTest for Qwen/Qwen3.6-35B-A3B (multimodal MoE)
+# Dev pipeline: bringup Accuracy step for Qwen/Qwen3.6-35B-A3B (multimodal MoE)
 
 steps:
 
