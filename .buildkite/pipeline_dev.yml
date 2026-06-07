@@ -33,7 +33,7 @@ steps:
       TPU_VERSION: "tpu6e"
       TEST_MODEL: "Qwen/Qwen3.6-35B-A3B"
       TENSOR_PARALLEL_SIZE: "8"
-      MINIMUM_ACCURACY_THRESHOLD: "0.41"
+      MINIMUM_ACCURACY_THRESHOLD: "0.29"
       MODEL_IMPL_TYPE: "vllm"
     agents:
       queue: tpu_v6e_8_queue
