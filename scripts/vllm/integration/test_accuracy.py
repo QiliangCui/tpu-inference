@@ -83,9 +83,20 @@ def run_test(model_name, expected_value, more_args=None):
     if log_samples:
         import json as _json
         samples = (results.get("samples") or {}).get(TASK, [])
-        for i, s in enumerate(samples[:3]):
+        for i, s in enumerate(samples[:5]):
+            args = s.get("arguments") or []
+            ctx = ""
+            gen_args = {}
+            if args and isinstance(args[0], (list, tuple)):
+                ctx = str(args[0][0])
+                if len(args[0]) > 1:
+                    gen_args = args[0][1]
             print(f"========== EVAL SAMPLE {i} ==========")
-            print(_json.dumps(s, default=str)[:4000])
+            print("PROMPT_TAIL:", repr(ctx[-300:]))
+            print("GEN_ARGS:", _json.dumps(gen_args, default=str)[:600])
+            print("RESPS:", _json.dumps(s.get("resps"), default=str)[:2500])
+            print("FILTERED:", _json.dumps(s.get("filtered_resps"), default=str)[:300])
+            print("TARGET_TAIL:", repr(str(s.get("target"))[-80:]))
             print(f"========== END SAMPLE {i} ==========")
 
     # gsm8k emits two filters: strict-match (default gate) and flexible-extract.
