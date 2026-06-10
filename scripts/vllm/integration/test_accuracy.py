@@ -50,6 +50,20 @@ def run_test(model_name, expected_value, more_args=None):
               "fewshot_as_multiturn for lm_eval. Required for instruction-"
               "tuned BOS-sensitive models like gemma-4-it.")
 
+    # Eval-geometry overrides. Reasoning models (Qwen3.x hybrid-thinking)
+    # emit long chains of thought before the final answer; lm_eval's
+    # default max_gen_toks (256) truncates mid-thought and both gsm8k
+    # filters score ~0. EVAL_GEN_KWARGS lets CI raise the budget, e.g.
+    # EVAL_GEN_KWARGS="max_gen_toks=4096". EVAL_LIMIT caps the number of
+    # eval examples for faster diagnostic runs.
+    gen_kwargs = os.environ.get("EVAL_GEN_KWARGS") or None
+    if gen_kwargs:
+        print(f"EVAL_GEN_KWARGS={gen_kwargs}")
+    limit_env = os.environ.get("EVAL_LIMIT")
+    limit = int(limit_env) if limit_env else None
+    if limit:
+        print(f"EVAL_LIMIT={limit}: evaluating a subset, accuracy is an estimate")
+
     results = lm_eval.simple_evaluate(
         model="vllm",
         model_args=model_args,
@@ -57,6 +71,8 @@ def run_test(model_name, expected_value, more_args=None):
         batch_size="auto",
         apply_chat_template=apply_chat_template,
         fewshot_as_multiturn=apply_chat_template,
+        gen_kwargs=gen_kwargs,
+        limit=limit,
     )
 
     # gsm8k emits two filters: strict-match (default gate) and flexible-extract.
@@ -95,7 +111,10 @@ def test_lm_eval_accuracy_v1_engine(monkeypatch: pytest.MonkeyPatch,
     with monkeypatch.context() as _:
         more_args = None
         if current_platform.is_tpu():
-            more_args = "max_model_len=2048,max_num_seqs=64"
+            # EVAL_MAX_MODEL_LEN: chat-template multiturn fewshot prompts +
+            # reasoning-model thinking tokens don't fit the 2048 default.
+            max_model_len = os.environ.get("EVAL_MAX_MODEL_LEN", "2048")
+            more_args = f"max_model_len={max_model_len},max_num_seqs=64"
             tp_size_str = f"tensor_parallel_size={tp_size}"
             more_args += ",{}".format(tp_size_str)
 
