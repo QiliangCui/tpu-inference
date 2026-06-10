@@ -63,6 +63,10 @@ def run_test(model_name, expected_value, more_args=None):
     limit = int(limit_env) if limit_env else None
     if limit:
         print(f"EVAL_LIMIT={limit}: evaluating a subset, accuracy is an estimate")
+    # EVAL_LOG_SAMPLES=1: dump the first few prompt/generation pairs to the
+    # CI log so eval-config failures (template issues, truncation, format
+    # drift) are diagnosable without a local repro.
+    log_samples = os.environ.get("EVAL_LOG_SAMPLES", "0") == "1"
 
     results = lm_eval.simple_evaluate(
         model="vllm",
@@ -73,7 +77,16 @@ def run_test(model_name, expected_value, more_args=None):
         fewshot_as_multiturn=apply_chat_template,
         gen_kwargs=gen_kwargs,
         limit=limit,
+        log_samples=log_samples,
     )
+
+    if log_samples:
+        import json as _json
+        samples = (results.get("samples") or {}).get(TASK, [])
+        for i, s in enumerate(samples[:3]):
+            print(f"========== EVAL SAMPLE {i} ==========")
+            print(_json.dumps(s, default=str)[:4000])
+            print(f"========== END SAMPLE {i} ==========")
 
     # gsm8k emits two filters: strict-match (default gate) and flexible-extract.
     # Print both so CI logs let reviewers compare across runs/kernels.
