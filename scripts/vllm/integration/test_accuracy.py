@@ -31,7 +31,10 @@ def run_test(model_name, expected_value, more_args=None):
     """Run the end to end accuracy test."""
     print(f"Running test for model: {model_name}")
 
-    if model_name in ["Qwen/Qwen3-30B-A3B", "Qwen/Qwen2.5-VL-7B-Instruct"]:
+    if model_name in [
+            "Qwen/Qwen3-30B-A3B", "Qwen/Qwen2.5-VL-7B-Instruct",
+            "Qwen/Qwen3.6-35B-A3B"
+    ]:
         model_args = f"pretrained={model_name},max_model_len=4096,max_num_batched_tokens=16384"
     elif model_name in [
             "meta-llama/Llama-3.1-8B-Instruct",
