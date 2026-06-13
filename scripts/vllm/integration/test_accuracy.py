@@ -141,6 +141,16 @@ def test_lm_eval_accuracy_v1_engine(monkeypatch: pytest.MonkeyPatch,
             more_args = f"max_model_len={max_model_len},max_num_seqs=64"
             tp_size_str = f"tensor_parallel_size={tp_size}"
             more_args += ",{}".format(tp_size_str)
+            # EVAL_GPU_MEMORY_UTILIZATION: opt-in HBM headroom knob. Large MoE
+            # models (e.g. Qwen3.6-35B-A3B) auto-size the KV cache to fill the
+            # default budget, leaving no room for the compiled step program
+            # (jit_step_fun_impl) and OOMing during warmup. Lowering the
+            # utilization shrinks the (heavily over-provisioned) KV cache to
+            # leave that headroom. Only applied when explicitly set so other
+            # models keep the vLLM default.
+            gpu_mem_util = os.environ.get("EVAL_GPU_MEMORY_UTILIZATION")
+            if gpu_mem_util:
+                more_args += f",gpu_memory_utilization={gpu_mem_util}"
 
         print(f"common args: {more_args}")
 

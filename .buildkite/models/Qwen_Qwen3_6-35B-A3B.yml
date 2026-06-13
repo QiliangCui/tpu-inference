@@ -54,7 +54,7 @@ steps:
       MODEL_IMPL_TYPE: vllm
     commands:
       - |
-        .buildkite/scripts/run_in_docker.sh bash -c 'USE_BATCHED_RPA_KERNEL=1 USE_CHAT_TEMPLATE=1 EVAL_MAX_MODEL_LEN=8192 EVAL_GEN_KWARGS="max_gen_toks=4096,until=<|im_end|>" EVAL_LIMIT=100 bash /workspace/tpu_inference/tests/e2e/benchmarking/test_accuracy.sh'
+        .buildkite/scripts/run_in_docker.sh bash -c 'USE_BATCHED_RPA_KERNEL=1 USE_CHAT_TEMPLATE=1 EVAL_MAX_MODEL_LEN=8192 EVAL_GEN_KWARGS="max_gen_toks=4096,until=<|im_end|>" EVAL_LIMIT=100 EVAL_GPU_MEMORY_UTILIZATION=0.85 bash /workspace/tpu_inference/tests/e2e/benchmarking/test_accuracy.sh'
 
   - label: "${TPU_VERSION:-tpu6e} Record integration test result for Qwen/Qwen3.6-35B-A3B"
     key: "${TPU_VERSION:-tpu6e}_record_Qwen_Qwen3_6-35B-A3B_Accuracy"
