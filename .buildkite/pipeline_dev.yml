@@ -8,6 +8,11 @@
 # Serve config A: TP=32/EP=32, DCP=1, token budget 8192, seqs 400, fp8 KV,
 # stock scheduler. Benchmark: random 8192/1024, range-ratio 0.8 (pinned
 # reference harness), points C=1/16/32/100.
+#
+# BENCH_MODEL must be passed to the client and must equal the serve --model
+# string: the client puts it in the request payload's "model" field, and the
+# server's served-model-name defaults to its own --model, so any mismatch
+# 404s every request (silently, after the full multi-host boot).
 
 steps:
   - label: "tpu7x [prebuilt] single-host serve gate"
@@ -55,4 +60,4 @@ steps:
             --kv-cache-dtype fp8 \
             --enable-expert-parallel \
             --port 8899" \
-          "bash /workspace/bench_sweep.sh 1:10 16:160 32:320 100:1000"
+          "BENCH_MODEL=\${MODEL} bash /workspace/bench_sweep.sh 1:10 16:160 32:320 100:1000"
