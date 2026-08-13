@@ -16,22 +16,15 @@
 # server's served-model-name defaults to its own --model, so any mismatch
 # 404s every request (silently, after the full multi-host boot).
 
+# The single-host serve gate is intentionally omitted for this run: it exists
+# to validate the gs:// loader + tokenizer + serve path cheaply before taking
+# the 32-device pod, and that path has already passed on this image (same
+# manifest digest) with this exact serve command. Keeping it would only park
+# an idle 32-pod behind a contended 2-chip queue. Restore it for any run that
+# changes the image, the model path, or the serve flags.
 steps:
-  - label: "tpu7x [prebuilt] single-host serve gate"
-    key: serve_gate
-    timeout_in_minutes: 45
-    env:
-      USE_PREBUILT_IMAGE: "1"
-      TPU_VERSION: "tpu7x"
-      MODEL_IMPL_TYPE: "vllm"
-    agents:
-      queue: tpu_v7x_2_queue
-    commands:
-      - .buildkite/scripts/run_in_docker.sh bash /workspace/gate_tiny_serve.sh
-
   - label: "tpu7x-32 [prebuilt] serve+bench arm B (C=100,200)"
     key: armb_sweep
-    depends_on: serve_gate
     timeout_in_minutes: 600
     env:
       USE_PREBUILT_IMAGE: "1"
