@@ -5,9 +5,11 @@
 # IS_MULTI_HOST_BENCH=true makes run_multihost.sh pull that tag and distribute it
 # to all hosts; no build step needed.
 #
-# Serve config A: TP=32/EP=32, DCP=1, token budget 8192, seqs 400, fp8 KV,
-# stock scheduler. Benchmark: random 8192/1024, range-ratio 0.8 (pinned
-# reference harness), points C=1/16/32/100.
+# Serve config B: PP=4 x EP=8, fp8 KV, token budget 1024, seqs 512, async
+# stagger scheduler. Benchmark: random 8192/1024, range-ratio 0.8 (pinned
+# reference harness), points C=100/200 -- the two reference best-envelope
+# rows not yet covered (C=32 and C=512 were measured in build 826).
+# N convention: 10xC for C<=100, 2048 for C>=200.
 #
 # BENCH_MODEL must be passed to the client and must equal the serve --model
 # string: the client puts it in the request payload's "model" field, and the
@@ -27,8 +29,8 @@ steps:
     commands:
       - .buildkite/scripts/run_in_docker.sh bash /workspace/gate_tiny_serve.sh
 
-  - label: "tpu7x-32 [prebuilt] serve+bench arm A (C=1..100)"
-    key: arma_sweep
+  - label: "tpu7x-32 [prebuilt] serve+bench arm B (C=100,200)"
+    key: armb_sweep
     depends_on: serve_gate
     timeout_in_minutes: 600
     env:
@@ -37,21 +39,22 @@ steps:
       TPU_VERSION: "tpu7x"
       NEW_MODEL_DESIGN: "1"
       SERVER_READY_TIMEOUT: "14400"
-      EXTRA_SERVER_ENVS: "MIN_TOKEN_BUCKET=32 DISABLE_WEIGHT_REQUANTIZATION=1 VLLM_ENGINE_READY_TIMEOUT_S=14400 JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS=0.05"
+      EXTRA_SERVER_ENVS: "MIN_TOKEN_BUCKET=16 VLLM_PP_LAYER_PARTITION=24,24,24,21 TPU_PP_TRANSPORT=auto DISABLE_WEIGHT_REQUANTIZATION=1 VLLM_ENGINE_READY_TIMEOUT_S=14400 JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS=0.05"
     agents:
       queue: tpu_v7x_32_queue
     commands:
       - |
-        MODEL="gs://tpu-commons-ci/moonshootai/kimi/k3-textonly"
+        MODEL="gs://tpu-commons-ci/moonshootai/kimi/k3"
         .buildkite/scripts/run_multihost.sh \
           "vllm serve \${MODEL} \
             --trust-remote-code \
-            --tensor-parallel-size 32 \
+            --tensor-parallel-size 8 \
+            --pipeline-parallel-size 4 \
             --distributed-executor-backend ray \
             --max-model-len 9216 \
-            --max-num-batched-tokens 8192 \
-            --max-num-seqs 400 \
-            --gpu-memory-utilization 0.9 \
+            --max-num-batched-tokens 1024 \
+            --max-num-seqs 512 \
+            --gpu-memory-utilization 0.92 \
             --load-format runai_streamer \
             --additional-config '{\"sharding\":{\"sharding_strategy\":{\"enable_dp_attention\":true,\"attn_dp_size\":1}}}' \
             --no-enable-prefix-caching \
@@ -59,5 +62,6 @@ steps:
             --disable-chunked-mm-input \
             --kv-cache-dtype fp8 \
             --enable-expert-parallel \
+            --scheduler-cls tpu_inference.core.sched.pp_stagger_scheduler.PpStaggerAsyncScheduler \
             --port 8899" \
-          "BENCH_MODEL=\${MODEL} bash /workspace/bench_sweep.sh 1:10 16:160 32:320 100:1000"
+          "BENCH_MODEL=\${MODEL} bash /workspace/bench_sweep.sh 100:1000 200:2048"
