@@ -5,18 +5,31 @@
 # IS_MULTI_HOST_BENCH=true makes run_multihost.sh pull that tag and distribute it
 # to all hosts; no build step needed.
 #
-# Serve config B: PP=4 x EP=8, fp8 KV, token budget 1024, seqs 512, async
-# stagger scheduler. Benchmark: random 8192/1024, range-ratio 0.8 (pinned
-# reference harness), points C=100/200 -- the two reference best-envelope
-# rows not yet covered (C=32 and C=512 were measured in build 826).
-# N convention: 10xC for C<=100, 2048 for C>=200.
+# Serve config A: TP=32/EP=32, DCP=1, token budget 8192, seqs 400, fp8 KV,
+# stock scheduler, text-only checkpoint (the multimodal wrapper cannot boot at
+# TP=32: the vision tower has 12 KV heads and 32 % 12 != 0).
 #
-# GSM8K runs in the SAME serve session right after the sweep, so the accuracy
-# number belongs to the exact process that produced the perf numbers and also
-# reflects any weight damage accumulated over the sweep's requests. Protocol:
-# lm_eval gsm8k_cot, 8-shot, 1319 problems, num_concurrent=4 / batch_size=1 /
-# timeout=1800, matching the reference run. It runs from an isolated venv
-# (/opt/lmeval) so its torch/transformers cannot perturb the serving stack.
+# This run is about ACCURACY. GSM8K is run twice against the same serve
+# session -- once on a freshly loaded model and once after the perf points --
+# so the pair brackets ~2800 requests. That is the cheap stand-in for the
+# reference runs' before/after teacher-forced gate, and it is the check that
+# matters against the open EP=32 weight-corruption defect (reported clean to
+# 168 requests, corrupt by 216). C=1 and C=16 are re-measured in between:
+# they are the two TP32 best-envelope points, and they supply the request
+# volume between the brackets.
+#
+# The client first PROBES three protocols on 100 problems and then runs the
+# winner in full, because the reference command's --apply_chat_template is not
+# straightforward to reproduce: K3 implements apply_chat_template in Python
+# rather than as a jinja string, and lm_eval's local-completions path does not
+# render it (it posts raw message dicts and then crashes). The working route is
+# local-chat-completions, letting vLLM apply the template server-side. That
+# template opens a thinking channel at thinking_effort=max, and lm_eval's stop
+# strings are not K3's, so the probe also tests a 256- vs 1024-token budget to
+# see whether truncation is what wrecks strict-match.
+#
+# lm_eval runs from an isolated venv (/opt/lmeval) so its torch/transformers
+# cannot perturb the pinned serving stack.
 #
 # BENCH_MODEL must be passed to the client and must equal the serve --model
 # string: the client puts it in the request payload's "model" field, and the
@@ -30,8 +43,8 @@
 # an idle 32-pod behind a contended 2-chip queue. Restore it for any run that
 # changes the image, the model path, or the serve flags.
 steps:
-  - label: "tpu7x-32 [prebuilt] serve+bench arm B (C=100,200)"
-    key: armb_sweep
+  - label: "tpu7x-32 [prebuilt] serve+bench arm A (GSM8K bracket)"
+    key: arma_gsm8k
     timeout_in_minutes: 600
     env:
       USE_PREBUILT_IMAGE: "1"
@@ -39,22 +52,21 @@ steps:
       TPU_VERSION: "tpu7x"
       NEW_MODEL_DESIGN: "1"
       SERVER_READY_TIMEOUT: "14400"
-      EXTRA_SERVER_ENVS: "MIN_TOKEN_BUCKET=16 VLLM_PP_LAYER_PARTITION=24,24,24,21 TPU_PP_TRANSPORT=auto DISABLE_WEIGHT_REQUANTIZATION=1 VLLM_ENGINE_READY_TIMEOUT_S=14400 JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS=0.05"
+      EXTRA_SERVER_ENVS: "MIN_TOKEN_BUCKET=32 DISABLE_WEIGHT_REQUANTIZATION=1 VLLM_ENGINE_READY_TIMEOUT_S=14400 JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS=0.05"
     agents:
       queue: tpu_v7x_32_queue
     commands:
       - |
-        MODEL="gs://tpu-commons-ci/moonshootai/kimi/k3"
+        MODEL="gs://tpu-commons-ci/moonshootai/kimi/k3-textonly"
         .buildkite/scripts/run_multihost.sh \
           "vllm serve \${MODEL} \
             --trust-remote-code \
-            --tensor-parallel-size 8 \
-            --pipeline-parallel-size 4 \
+            --tensor-parallel-size 32 \
             --distributed-executor-backend ray \
             --max-model-len 9216 \
-            --max-num-batched-tokens 1024 \
-            --max-num-seqs 512 \
-            --gpu-memory-utilization 0.92 \
+            --max-num-batched-tokens 8192 \
+            --max-num-seqs 400 \
+            --gpu-memory-utilization 0.9 \
             --load-format runai_streamer \
             --additional-config '{\"sharding\":{\"sharding_strategy\":{\"enable_dp_attention\":true,\"attn_dp_size\":1}}}' \
             --no-enable-prefix-caching \
@@ -62,6 +74,5 @@ steps:
             --disable-chunked-mm-input \
             --kv-cache-dtype fp8 \
             --enable-expert-parallel \
-            --scheduler-cls tpu_inference.core.sched.pp_stagger_scheduler.PpStaggerAsyncScheduler \
             --port 8899" \
-          "BENCH_MODEL=\${MODEL} GSM8K_TAG_PREFIX=stagger bash /workspace/run_client.sh 100:1000 200:2048"
+          "BENCH_MODEL=\${MODEL} GSM8K_PROBE=1 GSM8K_PROBE_LIMIT=100 GSM8K_CONC=16 GSM8K_TAG_PREFIX=tp32 bash /workspace/run_client.sh 1:10 16:160"
