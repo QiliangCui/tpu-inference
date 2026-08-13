@@ -11,6 +11,13 @@
 # rows not yet covered (C=32 and C=512 were measured in build 826).
 # N convention: 10xC for C<=100, 2048 for C>=200.
 #
+# GSM8K runs in the SAME serve session right after the sweep, so the accuracy
+# number belongs to the exact process that produced the perf numbers and also
+# reflects any weight damage accumulated over the sweep's requests. Protocol:
+# lm_eval gsm8k_cot, 8-shot, 1319 problems, num_concurrent=4 / batch_size=1 /
+# timeout=1800, matching the reference run. It runs from an isolated venv
+# (/opt/lmeval) so its torch/transformers cannot perturb the serving stack.
+#
 # BENCH_MODEL must be passed to the client and must equal the serve --model
 # string: the client puts it in the request payload's "model" field, and the
 # server's served-model-name defaults to its own --model, so any mismatch
@@ -57,4 +64,4 @@ steps:
             --enable-expert-parallel \
             --scheduler-cls tpu_inference.core.sched.pp_stagger_scheduler.PpStaggerAsyncScheduler \
             --port 8899" \
-          "BENCH_MODEL=\${MODEL} bash /workspace/bench_sweep.sh 100:1000 200:2048"
+          "BENCH_MODEL=\${MODEL} GSM8K_TAG_PREFIX=stagger bash /workspace/run_client.sh 100:1000 200:2048"
