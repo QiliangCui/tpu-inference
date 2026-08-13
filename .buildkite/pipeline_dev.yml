@@ -43,8 +43,8 @@
 # an idle 32-pod behind a contended 2-chip queue. Restore it for any run that
 # changes the image, the model path, or the serve flags.
 steps:
-  - label: "tpu7x-32 [prebuilt] serve+bench arm A (GSM8K bracket)"
-    key: arma_gsm8k
+  - label: "tpu7x-32 [prebuilt] serve+acc arm A (gsm8k 5-shot)"
+    key: arma_acc775
     timeout_in_minutes: 600
     env:
       USE_PREBUILT_IMAGE: "1"
@@ -75,4 +75,4 @@ steps:
             --kv-cache-dtype fp8 \
             --enable-expert-parallel \
             --port 8899" \
-          "BENCH_MODEL=\${MODEL} GSM8K_PROBE=1 GSM8K_PROBE_LIMIT=100 GSM8K_CONC=16 GSM8K_TAG_PREFIX=tp32 bash /workspace/run_client.sh 1:10 16:160"
+          "BENCH_MODEL=\${MODEL} GSM8K_MODE=b775 GSM8K_TAG=tp32_b775 bash /workspace/run_gsm8k.sh"
