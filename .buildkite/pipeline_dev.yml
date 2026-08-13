@@ -37,7 +37,7 @@ steps:
       queue: tpu_v7x_32_queue
     commands:
       - |
-        MODEL="gs://tpu-commons-ci/moonshootai/kimi/k3"
+        MODEL="gs://tpu-commons-ci/moonshootai/kimi/k3-textonly"
         .buildkite/scripts/run_multihost.sh \
           "vllm serve \${MODEL} \
             --trust-remote-code \
