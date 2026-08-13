@@ -312,7 +312,7 @@ if [ "$#" -ge 1 ]; then
         
     else
         # Direct CLI configuration mode
-        # If the first argument is not a .json file, the script directly assigns 
+        # If the first argument is not a .json file, the script directly assigns
         # $1 as the server command and the remaining arguments ($*) as the client command.
         if [ "$#" -gt 0 ]; then
             VLLM_SERVE_CMD="$1"
@@ -325,6 +325,16 @@ if [ "$#" -ge 1 ]; then
         else
             VLLM_SERVE_CMD=""
             CLIENT_BENCH_CMD=""
+        fi
+        # In direct mode DOCKER_ENV_ARGS is otherwise empty, so custom env never
+        # reaches the head/worker node containers (JSON mode fills it from
+        # SERVER_CMD_ENVS). EXTRA_SERVER_ENVS is a space-separated KEY=VALUE
+        # list forwarded to every node container the same way.
+        if [[ -n "${EXTRA_SERVER_ENVS:-}" ]]; then
+            for env_item in ${EXTRA_SERVER_ENVS}; do
+                DOCKER_ENV_ARGS+=("-e" "$env_item")
+            done
+            echo "Forwarding EXTRA_SERVER_ENVS to node containers: ${EXTRA_SERVER_ENVS}"
         fi
     fi
 fi
@@ -458,6 +468,9 @@ if [[ -n "${SERVER_CMD_ENVS:-}" ]]; then
         fi
     done
 fi
+# SERVER_READY_TIMEOUT (step env) overrides for slow boots (e.g. TB-scale
+# checkpoints streamed from GCS take >2h; the built-in default is 7200s).
+SERVER_TIMEOUT="${SERVER_TIMEOUT:-${SERVER_READY_TIMEOUT:-}}"
 wait_for_server "$VLLM_PORT" "node" "vllm serve" "/root/vllm_serve.log" "$SERVER_TIMEOUT"
 
 # 5. Run Benchmarks / Validation
