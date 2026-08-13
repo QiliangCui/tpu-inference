@@ -43,8 +43,8 @@
 # an idle 32-pod behind a contended 2-chip queue. Restore it for any run that
 # changes the image, the model path, or the serve flags.
 steps:
-  - label: "tpu7x-32 [prebuilt] serve+acc arm B (gsm8k 5-shot)"
-    key: armb_acc775
+  - label: "tpu7x-32 [prebuilt] serve+profile arm B (8k/1k, 1 prompt)"
+    key: armb_profile
     timeout_in_minutes: 600
     env:
       USE_PREBUILT_IMAGE: "1"
@@ -52,7 +52,7 @@ steps:
       TPU_VERSION: "tpu7x"
       NEW_MODEL_DESIGN: "1"
       SERVER_READY_TIMEOUT: "14400"
-      EXTRA_SERVER_ENVS: "MIN_TOKEN_BUCKET=16 VLLM_PP_LAYER_PARTITION=24,24,24,21 TPU_PP_TRANSPORT=auto DISABLE_WEIGHT_REQUANTIZATION=1 VLLM_ENGINE_READY_TIMEOUT_S=14400 JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS=0.05"
+      EXTRA_SERVER_ENVS: "MIN_TOKEN_BUCKET=16 VLLM_PP_LAYER_PARTITION=24,24,24,21 TPU_PP_TRANSPORT=auto DISABLE_WEIGHT_REQUANTIZATION=1 VLLM_ENGINE_READY_TIMEOUT_S=14400 JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS=0.05 PHASED_PROFILING_DIR=/root/.cache/huggingface/phase_prof PHASED_PROFILER_NUM_STEPS_TO_PROFILE_FOR=3 PHASED_PROFILER_TRACK_CONCURRENCY=0"
     agents:
       queue: tpu_v7x_32_queue
     commands:
@@ -77,4 +77,5 @@ steps:
             --enable-expert-parallel \
             --scheduler-cls tpu_inference.core.sched.pp_stagger_scheduler.PpStaggerAsyncScheduler \
             --port 8899" \
-          "BENCH_MODEL=\${MODEL} GSM8K_MODE=b775 GSM8K_TAG=stagger_b775 bash /workspace/run_gsm8k.sh"
+          "BENCH_MODEL=\${MODEL} bash /workspace/bench_sweep.sh 1:1"
+        .buildkite/scripts/collect_phase_profiles.sh gs://cuiq-inference-test/k3/0813/pp4ep8_8k1k
