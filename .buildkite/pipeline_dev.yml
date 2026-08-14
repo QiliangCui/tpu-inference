@@ -43,8 +43,8 @@
 # an idle 32-pod behind a contended 2-chip queue. Restore it for any run that
 # changes the image, the model path, or the serve flags.
 steps:
-  - label: "tpu7x-32 [prebuilt] serve+acc arm A (gsm8k 8-shot)"
-    key: arma_acc8
+  - label: "tpu7x-32 [prebuilt] serve+acc arm B (gsm8k 8-shot)"
+    key: armb_acc8
     timeout_in_minutes: 600
     env:
       USE_PREBUILT_IMAGE: "1"
@@ -52,21 +52,22 @@ steps:
       TPU_VERSION: "tpu7x"
       NEW_MODEL_DESIGN: "1"
       SERVER_READY_TIMEOUT: "14400"
-      EXTRA_SERVER_ENVS: "MIN_TOKEN_BUCKET=32 DISABLE_WEIGHT_REQUANTIZATION=1 VLLM_ENGINE_READY_TIMEOUT_S=14400 JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS=0.05"
+      EXTRA_SERVER_ENVS: "MIN_TOKEN_BUCKET=16 VLLM_PP_LAYER_PARTITION=24,24,24,21 TPU_PP_TRANSPORT=auto DISABLE_WEIGHT_REQUANTIZATION=1 VLLM_ENGINE_READY_TIMEOUT_S=14400 JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS=0.05"
     agents:
       queue: tpu_v7x_32_queue
     commands:
       - |
-        MODEL="gs://tpu-commons-ci/moonshootai/kimi/k3-textonly"
+        MODEL="gs://tpu-commons-ci/moonshootai/kimi/k3"
         .buildkite/scripts/run_multihost.sh \
           "vllm serve \${MODEL} \
             --trust-remote-code \
-            --tensor-parallel-size 32 \
+            --tensor-parallel-size 8 \
+            --pipeline-parallel-size 4 \
             --distributed-executor-backend ray \
             --max-model-len 9216 \
-            --max-num-batched-tokens 8192 \
-            --max-num-seqs 400 \
-            --gpu-memory-utilization 0.9 \
+            --max-num-batched-tokens 1024 \
+            --max-num-seqs 512 \
+            --gpu-memory-utilization 0.92 \
             --load-format runai_streamer \
             --additional-config '{\"sharding\":{\"sharding_strategy\":{\"enable_dp_attention\":true,\"attn_dp_size\":1}}}' \
             --no-enable-prefix-caching \
@@ -74,5 +75,6 @@ steps:
             --disable-chunked-mm-input \
             --kv-cache-dtype fp8 \
             --enable-expert-parallel \
+            --scheduler-cls tpu_inference.core.sched.pp_stagger_scheduler.PpStaggerAsyncScheduler \
             --port 8899" \
-          "BENCH_MODEL=\${MODEL} GSM8K_MODE=b775 GSM8K_FEWSHOT=8 GSM8K_TAG=tp32_gsm8k_8shot bash /workspace/run_gsm8k.sh"
+          "BENCH_MODEL=\${MODEL} GSM8K_MODE=b775 GSM8K_FEWSHOT=8 GSM8K_TAG=stagger_gsm8k_8shot bash /workspace/run_gsm8k.sh"
