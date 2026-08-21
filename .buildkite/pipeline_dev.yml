@@ -1,22 +1,30 @@
 steps:
-  - label: "cpu64 disk report+reclaim {{matrix}}"
-    key: cpu64_disk
+  - label: "cpu64 disk probe {{matrix}}"
+    key: cpu64_probe
     agents:
       queue: cpu_64_core
-    matrix: ["1","2","3","4","5","6","7","8","9","10"]
+    matrix: ["1","2","3","4","5","6","7","8","9","10","11","12"]
     commands:
-      - 'echo "=== HOST: $(hostname) ==="'
-      - 'df -h --output=source,size,used,avail,pcent,target -x tmpfs -x devtmpfs'
-      - 'echo "=== biggest dirs under /var/lib ==="'
-      - 'sudo du -xh -d1 /var/lib 2>/dev/null | sort -h | tail -12 || true'
-      - 'echo "=== docker system df ==="'
-      - 'docker system df || true'
-      - 'echo "=== reclaim: builder cache ==="'
-      - 'docker builder prune -af || true'
-      - 'echo "=== reclaim: images older than 6h + stopped containers + volumes ==="'
-      - 'docker image prune -af --filter "until=6h" || true'
-      - 'docker container prune -f || true'
-      - 'docker volume prune -f || true'
-      - 'echo "=== AFTER ==="'
-      - 'df -h --output=source,size,used,avail,pcent,target -x tmpfs -x devtmpfs'
-      - 'docker system df || true'
+      - |
+        echo "HOST=$(hostname) INTERNAL_IP=$(hostname -I | awk '{print $1}')"
+        echo "--- df -h (all filesystems) ---"
+        df -h
+        echo "--- inodes on / ---"
+        df -i /
+        echo "--- docker storage config ---"
+        docker info --format 'root={{.DockerRootDir}} driver={{.Driver}}' || true
+        echo "--- docker system df ---"
+        docker system df || true
+        USE=$(df --output=pcent / | tail -1 | tr -dc '0-9')
+        echo "ROOT_USE_PCT=${USE}"
+        if [ "${USE}" -ge 70 ]; then
+          echo "--- reclaiming (root >=70%) ---"
+          docker builder prune -af || true
+          docker image prune -af --filter until=6h || true
+          docker container prune -f || true
+          echo "--- AFTER ---"
+          df -h /
+          docker system df || true
+        else
+          echo "--- root <70%, no reclaim needed ---"
+        fi
