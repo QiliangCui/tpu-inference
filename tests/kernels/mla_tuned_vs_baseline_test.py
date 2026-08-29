@@ -179,8 +179,13 @@ class MlaTunedVsBaselinePerformanceTest(jtu.JaxTestCase):
 
     @parameterized.named_parameters(*_get_tuned_test_cases())
     def test_tuned_vs_baseline_performance(self, key):
-        if not jtu.is_device_tpu_at_least(version=7):
-            self.skipTest("Performance comparison requires TPUv4+")
+        if not jtu.is_device_tpu_at_least(version=6):
+            self.skipTest("Performance comparison requires TPUv6+")
+        # tuned_params_mapping entries were tuned on TPU v7 hardware; on older
+        # generations we still measure and report, but the tuned>=baseline
+        # regression assertion only holds on the hardware the params were
+        # tuned for.
+        on_tuned_hardware = jtu.is_device_tpu_at_least(version=7)
 
         tuned_params = tuned_params_mapping[key]
 
@@ -262,6 +267,11 @@ class MlaTunedVsBaselinePerformanceTest(jtu.JaxTestCase):
         print(f"Speedup: {speedup:+.2f}%")
         print("=" * 80 + "\n")
 
+        if not on_tuned_hardware:
+            print("NOTE: params were tuned on TPU v7; measurements above are "
+                  "informational only on this device, skipping the "
+                  "regression assertion.")
+            return
         margin = 1.05 if tuned_src == "xprof_device" else 1.15
         self.assertLessEqual(
             tuned_latency, baseline_latency * margin,
